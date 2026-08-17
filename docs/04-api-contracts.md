@@ -1,7 +1,7 @@
 # 04. API Contracts
 
 Two clients (Expo app, operator console) and a public web surface consume one API. Those
-workstreams run in parallel, frequently by different agents, against a specification that
+workstreams run in parallel, frequently by different agents/devs, against a specification that
 is still moving. Contract drift is therefore the primary engineering risk in this project,
 and the machinery in this document is the mitigation. (ADR-0042)
 

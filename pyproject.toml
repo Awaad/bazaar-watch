@@ -1,5 +1,7 @@
 # Root configuration. Shared tool settings for every Python workspace member.
-# The uv workspace declaration arrives with the first member (apps/api).
+
+[tool.uv.workspace]
+members = ["apps/api"]
 
 [tool.ruff]
 line-length = 100
@@ -33,7 +35,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["PLR2004"]   # magic values are the point of a test assertion
+"**/tests/**" = ["PLR2004"]   # magic values are the point of a test assertion
 
 [tool.ruff.lint.isort]
 known-first-party = ["bazaarwatch"]
@@ -61,6 +63,8 @@ disallow_untyped_defs = false
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-q --strict-markers --strict-config"
+asyncio_mode = "strict"
+pythonpath = ["apps/api/src"]
 testpaths = ["apps"]
 markers = [
     "integration: requires Postgres and Redis (docker compose up -d)",

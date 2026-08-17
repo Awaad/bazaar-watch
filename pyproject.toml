@@ -1,0 +1,68 @@
+# Root configuration. Shared tool settings for every Python workspace member.
+# The uv workspace declaration arrives with the first member (apps/api).
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["**/migrations/versions/*.py"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "A",         # builtins shadowing
+    "C4",        # comprehensions
+    "DTZ",       # naive datetime: every timestamp in this system is tz-aware
+    "T20",       # print statements
+    "PT",        # pytest style
+    "RET",       # return simplification
+    "SIM",       # simplification
+    "TID",       # tidy imports
+    "ARG",       # unused arguments
+    "PTH",       # pathlib over os.path
+    "ERA",       # commented-out code
+    "PL",        # pylint subset
+    "RUF",
+]
+ignore = [
+    "PLR0913",   # argument count: FastAPI dependencies legitimately exceed it
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004"]   # magic values are the point of a test assertion
+
+[tool.ruff.lint.isort]
+known-first-party = ["bazaarwatch"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unreachable = true
+warn_no_return = true
+disallow_any_generics = true
+no_implicit_reexport = true
+show_error_codes = true
+exclude = ["migrations/versions/"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-q --strict-markers --strict-config"
+testpaths = ["apps"]
+markers = [
+    "integration: requires Postgres and Redis (docker compose up -d)",
+    "privacy: adversarial tests for the service-layer privacy invariants (never skip)",
+]

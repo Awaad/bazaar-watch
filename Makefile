@@ -48,8 +48,80 @@ gates: ## Run the custom silent-corruption gates
 	@bash tools/gates/no-naive-datetime.sh
 	@echo "gates passed"
 
+# --- local stack -----------------------------------------------------------
+
+.PHONY: env
+env: ## Create .env from the template if absent
+	@test -f .env || { cp .env.example .env; \
+		echo ".env created. Set POSTGRES_PASSWORD before 'make up'."; }
+	@test -f .env && echo ".env present"
+
+.PHONY: up
+up: ## Start postgres and redis, wait until healthy
+	docker compose up -d --build --wait
+	@$(MAKE) --no-print-directory db-versions
+
+.PHONY: down
+down: ## Stop the stack, keep volumes
+	docker compose down
+
+.PHONY: ps
+ps: ## Service status
+	docker compose ps
+
+.PHONY: logs
+logs: ## Tail logs
+	docker compose logs -f --tail=100
+
+.PHONY: psql
+psql: ## Interactive psql
+	docker compose exec -it postgres psql -U $${POSTGRES_USER:-bazaarwatch} -d $${POSTGRES_DB:-bazaarwatch}
+
+.PHONY: redis-cli
+redis-cli: ## Interactive redis-cli
+	docker compose exec -it redis redis-cli
+
+.PHONY: db-versions
+db-versions: ## Report installed extension versions
+	@echo "image build recorded:"
+	@docker compose exec -T postgres cat /etc/bazaarwatch-extension-versions 2>/dev/null \
+		| sed 's/^/  /' || echo "  (container not running)"
+	@echo "server reports:"
+	@docker compose exec -T postgres psql -U $${POSTGRES_USER:-bazaarwatch} \
+		-d $${POSTGRES_DB:-bazaarwatch} -At \
+		-c "SELECT '  ' || extname || '=' || extversion FROM pg_extension ORDER BY extname;" \
+		2>/dev/null || echo "  (not reachable)"
+
+.PHONY: db-reset
+db-reset: ## Destroy volumes and rebuild. All local data is lost.
+	@printf 'This destroys the local database and redis volumes. Continue? [y/N] '; \
+		read ans; [ "$$ans" = "y" ] || { echo "aborted"; exit 1; }
+	docker compose down -v
+	$(MAKE) up
+
+# --- checks ----------------------------------------------------------------
+
+.PHONY: typecheck
+typecheck: ## mypy --strict over the API
+	cd apps/api && MYPYPATH=src mypy --strict src/bazaarwatch
+
+.PHONY: boundaries
+boundaries: ## Enforce module boundaries (docs/01-architecture.md)
+	cd apps/api && PYTHONPATH=src lint-imports --config pyproject.toml
+
+.PHONY: test
+test: ## Run the test suite
+	pytest
+
+.PHONY: api
+api: ## Run the API against the local stack
+	cd apps/api && python -m bazaarwatch
+
 .PHONY: check
 check: ## Everything CI runs
 	$(MAKE) lint
 	$(MAKE) gates
+	$(MAKE) typecheck
+	$(MAKE) boundaries
+	$(MAKE) test
 	pre-commit run --all-files

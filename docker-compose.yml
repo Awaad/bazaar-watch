@@ -11,7 +11,7 @@ name: bazaar-watch
 services:
   postgres:
     build:
-      context: ./docker/postgres
+      context: ./infra/docker/postgres
     image: bazaar-watch/postgres:18
     restart: unless-stopped
     environment:
@@ -26,7 +26,7 @@ services:
       - "${POSTGRES_PORT:-55432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
+      - ./infra/docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bazaarwatch} -d ${POSTGRES_DB:-bazaarwatch}"]
       interval: 5s

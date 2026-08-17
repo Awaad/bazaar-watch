@@ -32,6 +32,9 @@ primary risk. (ADR-0042)
   api-client-ts/    GENERATED. Never edited
   api-types/        GENERATED. Enums, constants, error codes
   i18n/             Locale files, parity-checked
+/infra
+  docker/
+    postgres/       Postgres 18 image: PostGIS, pgvector, initdb bootstrap
 /tools
   geo-gen/          Overture Places to branch candidates
   bakeoff/          Extraction and embedding evaluation harnesses
@@ -41,7 +44,23 @@ primary risk. (ADR-0042)
 /docs
   *.md
   adr/
+docker-compose.yml  Root, because `docker compose` looks here by default
 ```
+
+### Where infrastructure lives
+
+`infra/` holds what is not any single application's concern: backing-service
+images, reverse proxy configuration, compose overrides, backup and restore
+scripts, deployment configuration.
+
+**An application's Dockerfile lives with the application**, at
+`apps/api/Dockerfile`, not in `infra/`. How the API is built is part of the API,
+and the Dockerfile needs to sit next to the source it copies. Collecting every
+Dockerfile in `infra/` would mean build contexts spanning the whole repository
+and coupling that is no longer visible from either end.
+
+`tools/` is developer tooling that runs on a developer's machine: gates,
+generators, evaluation harnesses. A service image is not that.
 
 Python with `uv`. TypeScript with `pnpm` workspaces.
 

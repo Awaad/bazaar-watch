@@ -1,0 +1,50 @@
+# Gates run locally as well as in CI. Catching a naive-casing mistake at commit
+# time is the difference between an annoyance and staying up till 5am figuring out what happned.
+#
+#   make hooks     install
+#   make check     run everything against all files
+default_install_hook_types: [pre-commit, commit-msg]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-json
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: trailing-whitespace
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: no-naive-casing
+        name: no locale-naive case conversion (ADR-0025)
+        entry: tools/gates/no-naive-casing.sh
+        language: script
+        types_or: [python, ts, tsx]
+
+      - id: no-float-money
+        name: no float arithmetic on money (ADR-0004)
+        entry: tools/gates/no-float-money.sh
+        language: script
+        types_or: [python, ts, tsx]
+
+      - id: no-naive-datetime
+        name: no naive datetime construction
+        entry: tools/gates/no-naive-datetime.sh
+        language: script
+        types: [python]

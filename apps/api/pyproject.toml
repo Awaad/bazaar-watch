@@ -1,0 +1,66 @@
+[project]
+name = "bazaarwatch-api"
+version = "0.0.0"
+description = "Bazaar Watch API"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "psycopg[binary,pool]>=3.2",
+    "redis>=5.2",
+    "structlog>=24.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "httpx>=0.28",
+    "mypy>=1.14",
+    "import-linter>=2.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bazaarwatch"]
+
+# Module boundaries from docs/01-architecture.md section 3, enforced rather than
+# documented. A violation fails the build; it does not produce a review comment.
+[tool.importlinter]
+root_packages = ["bazaarwatch"]
+include_external_packages = false
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture: dependency direction is downward only"
+type = "layers"
+layers = [
+    "bazaarwatch.workflows",
+    "bazaarwatch.modules",
+    "bazaarwatch.core",
+]
+
+[[tool.importlinter.contracts]]
+name = "core imports no domain module"
+type = "forbidden"
+source_modules = ["bazaarwatch.core"]
+forbidden_modules = ["bazaarwatch.modules", "bazaarwatch.workflows"]
+
+[[tool.importlinter.contracts]]
+name = "Module dependency order, from docs/01-architecture.md section 3"
+type = "layers"
+# Read bottom to top. A module may import anything below it and nothing above.
+# Siblings on one line are independent of each other.
+layers = [
+    "bazaarwatch.modules.economy",
+    "bazaarwatch.modules.integrity | bazaarwatch.modules.indexing | bazaarwatch.modules.search",
+    "bazaarwatch.modules.observations",
+    "bazaarwatch.modules.lexicon | bazaarwatch.modules.ingest",
+    "bazaarwatch.modules.catalog",
+    "bazaarwatch.modules.identity | bazaarwatch.modules.geo",
+]

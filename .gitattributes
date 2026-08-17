@@ -1,0 +1,22 @@
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.tar.gz binary
+
+# Generated. Committed so diffs are reviewable and CI can fail on staleness,
+# but excluded from language stats and collapsed in review. See ADR-0042.
+packages/api-client-ts/** linguist-generated=true
+packages/api-types/**     linguist-generated=true
+openapi.json              linguist-generated=true
+
+pnpm-lock.yaml -diff
+uv.lock        -diff
+
+docs/** linguist-documentation=true

@@ -37,3 +37,46 @@ Read in order. `docs/00-overview.md` first.
 
 Architecture decisions are in [`docs/adr/`](docs/adr/0000-adr-index.md). All 87 records are
 accepted. Changing one requires a superseding ADR, never an edit in place.
+
+
+## Getting started
+
+Requires [uv](https://docs.astral.sh/uv/), [pnpm](https://pnpm.io/) (via `corepack enable`)
+and Docker. Node and Python versions are pinned in `.nvmrc` and `.python-version`.
+
+```bash
+make install    # tooling, workspace dependencies, git hooks
+make check      # everything CI runs
+make help       # all targets
+```
+
+Ports are deliberately non-default so nothing collides with a local install:
+
+| Service | Port |
+|---|---|
+| Postgres | 55432 |
+| Redis | 56379 |
+| API | 58000 |
+| Console | 53000 |
+| Web | 53001 |
+
+## Repository layout
+
+```
+apps/        api, worker, console, web, app
+packages/    generated API clients and types, i18n
+tools/       gates, geo-gen, bakeoff harnesses
+config/      tuning.json and other validated data
+docs/        design documents and ADRs
+```
+
+See [docs/15-repo-structure-standards.md](docs/15-repo-structure-standards.md) for the module
+laws and the full CI gate list.
+
+## Working here
+
+- Accepted ADRs are never edited in place. Changing a decision requires a superseding record.
+- Tuning constants live in `config/tuning.json`, never in code or a DDL default.
+- Generated clients are committed and never hand-edited.
+- `tools/gates/` guards the mistakes that produce no error and no test failure, only quietly
+  wrong data. Read `tools/gates/README.md` before adding a `noqa`.

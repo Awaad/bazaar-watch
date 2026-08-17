@@ -1,1 +1,56 @@
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Node
+node_modules/
+.pnpm-store/
+*.tsbuildinfo
+.next/
+out/
+dist/
+build/
+
+# Expo
+.expo/
+.expo-shared/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editors
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+*.swp
+*.swo
+
+# Local data and artefacts
+/tmp/
+*.log
+/data/
+/media/
+
+# Terraform / secrets, in case they ever land here
+*.tfstate
+*.tfstate.*
+*.pem
+*.key

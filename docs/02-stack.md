@@ -71,12 +71,38 @@ fields, and targeted human review. (ADR-0014, ADR-0058)
 | Console | Next.js, App Router | Operator surface |
 | Public web | Next.js, App Router | Server rendering for local search visibility |
 | Data fetching | TanStack Query over the generated client | Retry, caching, and offline mutation semantics |
+| TypeScript | 7.x for `tsc`, 6.0 aliased for tooling | See below |
 | i18n | i18next with ICU | Locales TR, EN, RU, DE; Arabic RTL structurally supported from the first commit (ADR-0026) |
 | Maps | MapLibre GL | Tiles are swappable and chosen on cost, unlike POI data (ADR-0044) |
 
 Console and public web are separate Next.js applications. Different audiences, different
 auth, different deploy cadence, and the separation makes an operator surface leaking to
 the public web structurally harder.
+
+### TypeScript 7 and the programmatic API gap
+
+TypeScript 7.0 is the Go-native compiler and is roughly an order of magnitude faster on
+type-checking, which matters for a monorepo with three TypeScript workspaces.
+
+It ships without a stable programmatic API, which arrives in 7.1. Tools that import the compiler
+directly cannot run on it: typescript-eslint, ts-jest, ts-morph and custom AST transformers. A
+TypeScript 7 support request against typescript-eslint was closed as not planned, because the fix
+sits on the compiler side. Force-installing takes ESLint down entirely.
+
+The supported arrangement is to run both, wired through npm aliases because typescript-eslint
+resolves `typescript` through peer dependencies:
+
+- `typescript` aliased to `@typescript/typescript6`, which re-exports the 6.0 API and provides
+  `tsc6`, so ESLint and any other API consumer keeps working
+- TypeScript 7 providing `tsc` for type-checking and emit
+
+This is a package.json arrangement only. `tsconfig.base.json` is unaffected: TypeScript 7 turns
+6.0 deprecations into hard errors and makes `strict` and `esnext` the defaults, and every option
+we set is explicit rather than inherited.
+
+Revisit when 7.1 ships with the stable API, at which point the alias can be removed. Until then
+this is a two-package arrangement, not a version bump, and it is verified empirically when the
+first TypeScript workspace arrives rather than assumed here.
 
 Arabic is untranslated at launch but layout-ready. Logical properties (`margin-inline`,
 `padding-inline`) from the first commit cost nothing; retrofitting RTL across a built UI is

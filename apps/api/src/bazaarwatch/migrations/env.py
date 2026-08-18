@@ -16,6 +16,7 @@ from alembic import context
 from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from bazaarwatch.core.logging import configure_logging
 from bazaarwatch.core.models import Base
 from bazaarwatch.core.settings import get_settings
 
@@ -24,6 +25,7 @@ from bazaarwatch.core.settings import get_settings
 from bazaarwatch.modules.identity import models as identity_models  # noqa: F401
 
 config = context.config
+configure_logging(json_output=False)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

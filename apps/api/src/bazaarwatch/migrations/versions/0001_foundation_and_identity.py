@@ -16,6 +16,7 @@ first query. See infra/docker/postgres/README.md.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -48,21 +49,35 @@ $$;
 """
 
 
-def _assert_extensions() -> None:
-    bind = op.get_bind()
-    installed = {row[0] for row in bind.execute(sa.text("SELECT extname FROM pg_extension"))}
-    missing = [name for name in REQUIRED_EXTENSIONS if name not in installed]
-    if missing:
-        raise RuntimeError(
-            "Required extensions are not installed: "
-            + ", ".join(missing)
-            + ". They are created by the privileged initdb bootstrap, not by Alembic. "
-            "Locally: make db-reset. See infra/docker/postgres/README.md."
-        )
+# Asserted in SQL rather than in Python, so the check works identically in
+# online mode and in `--sql` offline mode, where there is no bind to query. One
+# code path, and the failure is raised by the server that would have to run the
+# rest of the migration anyway.
+_EXTENSION_LIST = ", ".join(f"'{name}'" for name in REQUIRED_EXTENSIONS)
+
+ASSERT_EXTENSIONS = f"""
+DO $$
+DECLARE
+    missing text;
+BEGIN
+    SELECT string_agg(required, ', ' ORDER BY required)
+      INTO missing
+      FROM unnest(ARRAY[{_EXTENSION_LIST}]) AS required
+     WHERE required NOT IN (SELECT extname FROM pg_extension);
+
+    IF missing IS NOT NULL THEN
+        RAISE EXCEPTION
+            'Required extensions are not installed: %. They are created by the '
+            'privileged initdb bootstrap, not by Alembic. Locally: make db-reset. '
+            'See infra/docker/postgres/README.md.', missing;
+    END IF;
+END
+$$;
+""".format(extensions=", ".join(f"'{name}'" for name in REQUIRED_EXTENSIONS))
 
 
 def upgrade() -> None:
-    _assert_extensions()
+    op.execute(ASSERT_EXTENSIONS)
 
     op.execute(_TURKISH_FOLD_SQL)
     op.execute(SET_UPDATED_AT)
@@ -92,15 +107,15 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "role IN ('contributor', 'moderator', 'operator', 'admin')",
-            name="ck_users_role_known",
+            name="role_known",
         ),
         sa.CheckConstraint(
             "status IN ('active', 'suspended', 'deleted')",
-            name="ck_users_status_known",
+            name="status_known",
         ),
         sa.CheckConstraint(
             "erased_at IS NULL OR (phone_e164 IS NULL AND display_name IS NULL)",
-            name="ck_users_erased_users_are_stripped",
+            name="erased_users_are_stripped",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_users"),
         sa.UniqueConstraint("slug", name="uq_users_slug"),
@@ -128,7 +143,7 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "shredded_at IS NULL OR kek_ref IS NULL",
-            name="ck_subject_keys_shredded_has_no_ref",
+            name="shredded_has_no_ref",
         ),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name="fk_subject_keys_user_id_users"),
         sa.PrimaryKeyConstraint("user_id", name="pk_subject_keys"),
@@ -178,7 +193,7 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.CheckConstraint("platform IN ('ios', 'android')", name="ck_push_tokens_platform_known"),
+        sa.CheckConstraint("platform IN ('ios', 'android')", name="platform_known"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name="fk_push_tokens_user_id_users"),
         sa.PrimaryKeyConstraint("id", name="pk_push_tokens"),
     )
@@ -198,7 +213,7 @@ def upgrade() -> None:
     for table in ("users", "contributor_trust"):
         op.execute(
             f"CREATE TRIGGER trg_{table}_updated_at BEFORE UPDATE ON {table} "
-            "FOR EACH ROW EXECUTE FUNCTION set_updated_at();"
+            "FOR EACH ROW EXECUTE FUNCTION set_updated_at()"
         )
 
     # The tombstone. Seeded with a fixed identifier so every environment agrees
@@ -208,8 +223,8 @@ def upgrade() -> None:
             """
             INSERT INTO users (id, slug, locale, role, status, is_tombstone)
             VALUES (:id, 'deleted-contributor', 'tr', 'contributor', 'active', true)
-            """
-        ).bindparams(id=TOMBSTONE_USER_ID)
+        """
+        ).bindparams(id=uuid.UUID(TOMBSTONE_USER_ID))
     )
 
 

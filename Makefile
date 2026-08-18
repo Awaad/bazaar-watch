@@ -49,6 +49,7 @@ gates: ## Run the custom silent-corruption gates
 	@bash tools/gates/no-naive-casing.sh
 	@bash tools/gates/no-float-money.sh
 	@bash tools/gates/no-naive-datetime.sh
+	@uv run python tools/gates/updated-at-triggers.py
 	@echo "gates passed"
 
 # --- local stack -----------------------------------------------------------
@@ -101,6 +102,26 @@ db-reset: ## Destroy volumes and rebuild. All local data is lost.
 		read ans; [ "$$ans" = "y" ] || { echo "aborted"; exit 1; }
 	docker compose down -v
 	$(MAKE) up
+
+
+# --- migrations ---
+
+.PHONY: migrate
+migrate: ## Apply migrations
+	uv run alembic -c apps/api/alembic.ini upgrade head
+
+.PHONY: migrate-down
+migrate-down: ## Roll back one migration
+	uv run alembic -c apps/api/alembic.ini downgrade -1
+
+.PHONY: migration
+migration: ## Autogenerate a revision: make migration m="add x"
+	@test -n "$(m)" || { echo 'usage: make migration m="description"'; exit 1; }
+	uv run alembic -c apps/api/alembic.ini revision --autogenerate -m "$(m)"
+
+.PHONY: db-current
+db-current: ## Show the applied revision
+	uv run alembic -c apps/api/alembic.ini current
 
 # --- checks ----------------------------------------------------------------
 

@@ -22,24 +22,23 @@ help: ## Show this help
 install: ## Install tooling (uv, pnpm deps, pre-commit)
 	@command -v uv >/dev/null || { echo "uv not found: https://docs.astral.sh/uv/"; exit 1; }
 	@command -v pnpm >/dev/null || { echo "pnpm not found: corepack enable"; exit 1; }
-	uv tool install pre-commit --quiet || true
-	uv tool install ruff --quiet || true
+	uv sync --all-groups
 	pnpm install
 	$(MAKE) hooks
 
 .PHONY: hooks
 hooks: ## Install git hooks
-	pre-commit install --install-hooks
+	uv run pre-commit install --install-hooks
 
 .PHONY: fmt
 fmt: ## Format
-	ruff format .
-	ruff check --fix .
+	uv run ruff format .
+	uv run ruff check --fix .
 
 .PHONY: lint
 lint: ## Lint
-	ruff format --check .
-	ruff check .
+	uv run ruff format --check .
+	uv run ruff check .
 
 .PHONY: gates
 gates: ## Run the custom silent-corruption gates
@@ -103,19 +102,19 @@ db-reset: ## Destroy volumes and rebuild. All local data is lost.
 
 .PHONY: typecheck
 typecheck: ## mypy --strict over the API
-	cd apps/api && MYPYPATH=src mypy --strict src/bazaarwatch
+	MYPYPATH=apps/api/src uv run mypy --strict apps/api/src/bazaarwatch
 
 .PHONY: boundaries
 boundaries: ## Enforce module boundaries (docs/01-architecture.md)
-	cd apps/api && PYTHONPATH=src lint-imports --config pyproject.toml
+	PYTHONPATH=apps/api/src uv run lint-imports --config apps/api/pyproject.toml
 
 .PHONY: test
 test: ## Run the test suite
-	pytest
+	uv run pytest
 
 .PHONY: api
 api: ## Run the API against the local stack
-	cd apps/api && python -m bazaarwatch
+	uv run python -m bazaarwatch
 
 .PHONY: check
 check: ## Everything CI runs
@@ -124,4 +123,4 @@ check: ## Everything CI runs
 	$(MAKE) typecheck
 	$(MAKE) boundaries
 	$(MAKE) test
-	pre-commit run --all-files
+	uv run pre-commit run --all-files

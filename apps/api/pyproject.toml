@@ -14,14 +14,6 @@ dependencies = [
     "structlog>=24.4",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.3",
-    "pytest-asyncio>=0.25",
-    "httpx>=0.28",
-    "mypy>=1.14",
-    "import-linter>=2.1",
-]
 
 [build-system]
 requires = ["hatchling"]

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import httpx
@@ -11,7 +11,7 @@ from bazaarwatch.core.settings import Settings
 
 
 @asynccontextmanager
-async def client_for(settings: Settings) -> AsyncIterator[httpx.AsyncClient]:
+async def client_for(settings: Settings) -> AsyncGenerator[httpx.AsyncClient]:
     """Runs the lifespan, so app.state carries the engine and redis client that
     readiness probes. Without it we would be testing an AttributeError."""
     app = create_app(settings)

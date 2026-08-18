@@ -6,7 +6,7 @@ are per request and are never shared across tasks.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -34,7 +34,7 @@ def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessi
 
 async def session_scope(
     factory: async_sessionmaker[AsyncSession],
-) -> AsyncIterator[AsyncSession]:
+) -> AsyncGenerator[AsyncSession]:
     """Commit on success, roll back on any exception. A partially applied unit
     of work is worse than a failed one."""
     async with factory() as session:

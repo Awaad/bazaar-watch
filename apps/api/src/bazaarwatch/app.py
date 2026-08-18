@@ -7,7 +7,7 @@ their own settings instead of importing a process-wide singleton.
 from __future__ import annotations
 
 import contextlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 
 import structlog
 from fastapi import FastAPI
@@ -25,7 +25,7 @@ logger = structlog.get_logger(__name__)
 
 
 @contextlib.asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     settings: Settings = app.state.settings
 
     engine = create_engine(settings)

@@ -31,6 +31,7 @@ jobs:
           bash tools/gates/no-naive-casing.sh
           bash tools/gates/no-float-money.sh
           bash tools/gates/no-naive-datetime.sh
+          python tools/gates/updated-at-triggers.py
 
       - uses: pre-commit/action@v3.0.1
 

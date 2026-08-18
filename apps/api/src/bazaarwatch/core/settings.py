@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, PostgresDsn, RedisDsn
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -38,6 +39,11 @@ class Settings(BaseSettings):
     )
 
     api_port: int = 58000
+
+    # Tuning is deployed data, so where it lives is deployment configuration.
+    # Relative paths resolve against the working directory, which is the
+    # repository root locally and the image workdir in a container.
+    tuning_path: Path = Path("config/tuning.json")
 
     # Echoing SQL is a development convenience and a production liability: it
     # writes query parameters, which include personal data, into the log.

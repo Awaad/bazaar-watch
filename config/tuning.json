@@ -1,0 +1,32 @@
+{
+  "version": 1,
+
+  "review": {
+    "required_responses": 2,
+    "agreement_threshold": 0.7,
+    "reviewer_weight_seed": 0.1,
+    "reviewer_weight_max": 1.0,
+    "honeypot_rate": 0.1,
+    "lease_ttl_seconds": 300
+  },
+
+  "economy": {
+    "submission_provisional_points": 5,
+    "submission_confirmed_points": 5,
+    "review_resolved_points": 1,
+    "lexicon_first_resolution_points": 10
+  },
+
+  "bounty": {
+    "empty_cell_multiplier": 3.0,
+    "stale_cell_multiplier": 2.0,
+    "max_multiplier": 5.0,
+    "staleness_days": 14
+  },
+
+  "integrity": {
+    "location_match_metres": 150,
+    "reward_recency_window_days": 7,
+    "dual_extraction_value_minor": 50000
+  }
+}

@@ -12,6 +12,7 @@ dependencies = [
     "psycopg[binary,pool]>=3.2",
     "redis>=5.2",
     "structlog>=24.4",
+    "alembic>=1.19.1",
 ]
 
 

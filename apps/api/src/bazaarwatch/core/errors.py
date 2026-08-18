@@ -54,8 +54,11 @@ class ProblemError(Exception):
         self.errors = errors or []
 
     def to_dict(self, instance: str | None = None) -> dict[str, Any]:
+        # ErrorCode values are ASCII by construction, so casing here is
+        # locale-independent.
+        slug = self.code.value.lower().replace("_", "-")  # gate-ignore: naive-casing
         body: dict[str, Any] = {
-            "type": f"{PROBLEM_BASE_URI}/{self.code.value.lower().replace('_', '-')}",
+            "type": f"{PROBLEM_BASE_URI}/{slug}",
             "title": self.title,
             "status": self.status,
             "code": self.code.value,

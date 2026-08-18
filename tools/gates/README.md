@@ -27,6 +27,12 @@ Gates added as the code they guard appears:
 
 ## Suppression
 
-Every gate honours a trailing `# noqa: <gate-name>` on the offending line.
-Suppression is a review conversation, not a private decision: a `noqa` in a
-diff should be explained in the pull request.
+Every gate honours a trailing `# gate-ignore: <gate-name>` on the offending
+line, and the line above it should say why.
+
+The marker is deliberately **not** `# noqa`. Ruff owns that directive and warns
+when it sees a value that is not a ruff rule code, so a custom gate sharing the
+syntax produces a warning on every suppression.
+
+Suppression is a review conversation, not a private decision: a `gate-ignore` in
+a diff should be explained in the pull request.

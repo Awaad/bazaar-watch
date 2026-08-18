@@ -16,11 +16,11 @@ fi
 
 pattern='\.(toUpperCase|toLowerCase)\(\)|\.upper\(\)|\.lower\(\)|\.casefold\(\)|\bupper\(|\blower\('
 
-if hits=$(grep -nEH "$pattern" "${files[@]}" 2>/dev/null | grep -v 'noqa: naive-casing'); then
+if hits=$(grep -nEH "$pattern" "${files[@]}" 2>/dev/null | grep -v 'gate-ignore: naive-casing'); then
     echo "Locale-naive case conversion found. Use core.text.turkish_fold() (ADR-0025):"
     echo "$hits"
     echo
-    echo "If genuinely locale-independent, append:  # noqa: naive-casing"
+    echo "If genuinely locale-independent, append:  # gate-ignore: naive-casing"
     exit 1
 fi
 exit 0

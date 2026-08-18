@@ -14,7 +14,7 @@ fi
 
 pattern='datetime\.(now|utcnow)\(\s*\)|datetime\.utcnow'
 
-if hits=$(grep -nEH "$pattern" "${files[@]}" 2>/dev/null | grep -v 'noqa: naive-datetime'); then
+if hits=$(grep -nEH "$pattern" "${files[@]}" 2>/dev/null | grep -v 'gate-ignore: naive-datetime'); then
     echo "Naive datetime construction. Use datetime.now(tz=UTC):"
     echo "$hits"
     exit 1

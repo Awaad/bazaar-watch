@@ -20,7 +20,7 @@ if hits=$(grep -nEHi "$pattern" "${files[@]}" 2>/dev/null | grep -v 'noqa: float
     echo "Floating point used on a monetary value. Use integer minor units (ADR-0004):"
     echo "$hits"
     echo
-    echo "If this is not money, append:  # noqa: float-money"
+    echo "If this is not money, append:  # gate-ignore: float-money"
     exit 1
 fi
 exit 0

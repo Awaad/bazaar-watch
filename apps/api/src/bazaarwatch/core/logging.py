@@ -44,7 +44,8 @@ def _redact(
     _logger: object, _name: str, event_dict: structlog.types.EventDict
 ) -> structlog.types.EventDict:
     for key in list(event_dict):
-        if key.lower() in REDACTED_KEYS:
+        # Log field names are ASCII identifiers, never user text.
+        if key.lower() in REDACTED_KEYS:  # gate-ignore: naive-casing
             event_dict[key] = _REDACTED
     return event_dict
 

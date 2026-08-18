@@ -21,7 +21,10 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-extend-exclude = ["**/migrations/versions/*.py"]
+# Migrations are not excluded. They are hand-written here, they are the most
+# consequential code in the repository, and an exclusion that applies to
+# directory traversal but not to explicitly named paths makes `make lint`
+# and the pre-commit hook disagree.
 
 [tool.ruff.lint]
 select = [
@@ -51,6 +54,12 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["PLR2004"]   # magic values are the point of a test assertion
+# Ambiguous Unicode is the subject matter of the fold, not a mistake in it.
+"**/core/text.py" = ["RUF001", "RUF002"]
+"**/tests/test_text.py" = ["PLR2004", "RUF001", "RUF002"]
+"**/tests/test_fold_parity.py" = ["PLR2004", "RUF001", "RUF002"]
+# Gates are command-line tools. Printing is their output.
+"tools/gates/*.py" = ["T201"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bazaarwatch"]
@@ -69,7 +78,6 @@ warn_no_return = true
 disallow_any_generics = true
 no_implicit_reexport = true
 show_error_codes = true
-exclude = ["migrations/versions/"]
 
 [[tool.mypy.overrides]]
 module = ["tests.*"]

@@ -1,5 +1,5 @@
 # Gates run locally as well as in CI. Catching a naive-casing mistake at commit
-# time is the difference between an annoyance and staying up till 5am figuring out what happned.
+# time is the difference between a habit and an annoyance.
 #
 #   make hooks     install
 #   make check     run everything against all files
@@ -22,12 +22,26 @@ repos:
       - id: trailing-whitespace
       - id: detect-private-key
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.6
+  # Deliberately the workspace ruff, not ruff-pre-commit. A separately pinned
+  # ruff means two versions in one repository, and they will disagree: a rule
+  # or a per-file-ignore glob that one honours the other may not. One ruff,
+  # from the lockfile, is the only arrangement where `make lint` and the hook
+  # can be trusted to agree.
+  - repo: local
     hooks:
       - id: ruff
-        args: ["--fix"]
+        name: ruff (workspace)
+        entry: uv run ruff check --fix
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
       - id: ruff-format
+        name: ruff-format (workspace)
+        entry: uv run ruff format
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
 
   - repo: local
     hooks:
@@ -48,3 +62,10 @@ repos:
         entry: tools/gates/no-naive-datetime.sh
         language: script
         types: [python]
+
+      - id: updated-at-triggers
+        name: every updated_at column has a trigger
+        entry: tools/gates/updated-at-triggers.py
+        language: script
+        pass_filenames: false
+        files: ^apps/api/src/bazaarwatch/migrations/

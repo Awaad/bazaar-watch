@@ -6,17 +6,28 @@
 # ever raising. See ADR-0004.
 set -euo pipefail
 
-files=("$@")
-if [ ${#files[@]} -eq 0 ]; then
-    mapfile -t files < <(git ls-files '*.py' '*.ts' '*.tsx' 2>/dev/null || true)
-fi
-[ ${#files[@]} -eq 0 ] && exit 0
+# macOS ships bash 3.2, which has no `mapfile`. Everything below is bash 3.2
+# compatible: no mapfile, no readarray, no associative arrays.
 
-# float()/parseFloat() applied to something money-shaped, or a float-typed
-# declaration whose name contains price/amount/total/cost.
+list=$(mktemp)
+trap 'rm -f "$list"' EXIT
+
+if [ "$#" -gt 0 ]; then
+    printf '%s\n' "$@" > "$list"
+else
+    git ls-files '*.py' '*.ts' '*.tsx' > "$list" 2>/dev/null || true
+fi
+
+# Nothing to scan is not a failure.
+[ -s "$list" ] || exit 0
+
 pattern='(float|parseFloat)\([^)]*(price|amount|total|cost|minor)|(price|amount|total|cost)[a-zA-Z_]*\s*:\s*float\b'
 
-if hits=$(grep -nEHi "$pattern" "${files[@]}" 2>/dev/null | grep -v 'noqa: float-money'); then
+hits=$(tr '\n' '\0' < "$list" \
+    | xargs -0 grep -nEHi "$pattern" 2>/dev/null \
+    | grep -v 'gate-ignore: float-money' || true)
+
+if [ -n "$hits" ]; then
     echo "Floating point used on a monetary value. Use integer minor units (ADR-0004):"
     echo "$hits"
     echo

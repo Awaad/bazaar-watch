@@ -6,15 +6,28 @@
 # written to TIMESTAMPTZ is silently interpreted in the server timezone.
 set -euo pipefail
 
-files=("$@")
-if [ ${#files[@]} -eq 0 ]; then
-    mapfile -t files < <(git ls-files '*.py' 2>/dev/null || true)
+# macOS ships bash 3.2, which has no `mapfile`. Everything below is bash 3.2
+# compatible: no mapfile, no readarray, no associative arrays.
+
+list=$(mktemp)
+trap 'rm -f "$list"' EXIT
+
+if [ "$#" -gt 0 ]; then
+    printf '%s\n' "$@" > "$list"
+else
+    git ls-files '*.py' > "$list" 2>/dev/null || true
 fi
-[ ${#files[@]} -eq 0 ] && exit 0
+
+# Nothing to scan is not a failure.
+[ -s "$list" ] || exit 0
 
 pattern='datetime\.(now|utcnow)\(\s*\)|datetime\.utcnow'
 
-if hits=$(grep -nEH "$pattern" "${files[@]}" 2>/dev/null | grep -v 'gate-ignore: naive-datetime'); then
+hits=$(tr '\n' '\0' < "$list" \
+    | xargs -0 grep -nEH "$pattern" 2>/dev/null \
+    | grep -v 'gate-ignore: naive-datetime' || true)
+
+if [ -n "$hits" ]; then
     echo "Naive datetime construction. Use datetime.now(tz=UTC):"
     echo "$hits"
     exit 1

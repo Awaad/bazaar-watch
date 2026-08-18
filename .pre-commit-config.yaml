@@ -1,8 +1,12 @@
-# Gates run locally as well as in CI. Catching a naive-casing mistake at commit
-# time is the difference between a habit and an annoyance.
+# Hooks verify. They do not modify.
 #
-#   make hooks     install
-#   make check     run everything against all files
+# An auto-fixing hook rewrites staged files, and when the same file also has
+# unstaged changes, pre-commit's stash cannot be restored cleanly and the commit
+# rolls back. That loop costs more than the convenience is worth, so every hook
+# here either passes or fails with something actionable.
+#
+#   make fmt       fix everything
+#   make check     verify, and never modify
 default_install_hook_types: [pre-commit, commit-msg]
 
 repos:
@@ -16,10 +20,17 @@ repos:
       - id: check-json
       - id: check-toml
       - id: check-yaml
+      # Python is excluded from both: ruff-format already strips trailing
+      # whitespace, including inside docstrings, and guarantees a final
+      # newline. Running them over .py as well means two hooks competing to
+      # rewrite the same lines.
       - id: end-of-file-fixer
+        exclude_types: [python, pyi]
       - id: mixed-line-ending
         args: ["--fix=lf"]
+        exclude_types: [python, pyi]
       - id: trailing-whitespace
+        exclude_types: [python, pyi]
       - id: detect-private-key
 
   # Deliberately the workspace ruff, not ruff-pre-commit. A separately pinned
@@ -31,14 +42,14 @@ repos:
     hooks:
       - id: ruff
         name: ruff (workspace)
-        entry: uv run ruff check --fix
+        entry: uv run ruff check
         language: system
         types_or: [python, pyi]
         require_serial: true
 
       - id: ruff-format
         name: ruff-format (workspace)
-        entry: uv run ruff format
+        entry: uv run ruff format --check
         language: system
         types_or: [python, pyi]
         require_serial: true

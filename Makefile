@@ -26,12 +26,16 @@ install: ## Install tooling (uv, pnpm deps, pre-commit)
 	pnpm install
 	$(MAKE) hooks
 
+.PHONY: hooks-run
+hooks-run: ## Run every hook against all files. Verifies, never modifies.
+	uv run pre-commit run --all-files
+
 .PHONY: hooks
 hooks: ## Install git hooks
 	uv run pre-commit install --install-hooks
 
 .PHONY: fmt
-fmt: ## Format
+fmt: ## Fix everything a tool can fix
 	uv run ruff format .
 	uv run ruff check --fix .
 
@@ -123,4 +127,4 @@ check: ## Everything CI runs
 	$(MAKE) typecheck
 	$(MAKE) boundaries
 	$(MAKE) test
-	uv run pre-commit run --all-files
+	$(MAKE) hooks-run

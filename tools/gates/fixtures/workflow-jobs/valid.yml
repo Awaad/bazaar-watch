@@ -1,0 +1,10 @@
+# Fixture: a well formed workflow. The gate must stay silent on this one.
+name: Fixture
+on:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4

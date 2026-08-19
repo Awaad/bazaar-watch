@@ -1,0 +1,4 @@
+# Fixture: a workflow with no jobs at all. Valid YAML, runs nothing.
+name: Fixture
+on:
+  pull_request:

@@ -12,6 +12,9 @@ failure**, only quietly wrong data discovered weeks later. See
 | `no-naive-casing.sh` | Turkish dotted and dotless i corrupting lexicon keys | 0025 |
 | `no-float-money.sh` | Float arithmetic on prices | 0004 |
 | `no-naive-datetime.sh` | Naive datetimes written to `TIMESTAMPTZ` | 0002 |
+| `updated-at-triggers.py` | A mutable table whose `updated_at` silently stops changing | 0002 |
+| `workflow-jobs.py` | A CI job dedented out of `jobs`, so it never runs | |
+| `enum-parity.py` | An enum gaining a member that no migration adds to its `CHECK` | 0042 |
 
 Gates added as the code they guard appears:
 
@@ -22,8 +25,18 @@ Gates added as the code they guard appears:
 | `no-handwritten-calls` | generated API clients (ADR-0042) |
 | `no-literal-strings` | UI code (ADR-0026) |
 | `no-server-formatting` | API responses (ADR-0004) |
-| `updated-at-triggers` | the first migration carrying `updated_at` |
-| `enum-parity` | the first `StrEnum` backed by a `CHECK` constraint |
+| `i18n-parity` | locale files (ADR-0026) |
+
+## Fixtures
+
+`fixtures/` holds inputs a gate is run against to prove it fires. A gate that
+has never failed has never been tested, and the tests in
+`apps/api/tests/test_gates.py` run each gate over its fixtures and assert the
+exit status.
+
+Where the guarded mistake can be reintroduced directly, that is better evidence
+than a fixture, and the slice README records it. `enum-parity` was proven by
+adding a member to `UserRole` and watching it fail.
 
 ## Suppression
 

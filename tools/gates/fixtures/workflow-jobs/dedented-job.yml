@@ -1,0 +1,16 @@
+# Fixture: the bug this gate exists for. `test` is at column zero, so it is a
+# top-level workflow key rather than a job, and it never runs. Valid YAML.
+name: Fixture
+on:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pytest

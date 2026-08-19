@@ -50,6 +50,8 @@ gates: ## Run the custom silent-corruption gates
 	@bash tools/gates/no-float-money.sh
 	@bash tools/gates/no-naive-datetime.sh
 	@uv run python tools/gates/updated-at-triggers.py
+	@uv run python tools/gates/workflow-jobs.py
+	@uv run python tools/gates/enum-parity.py
 	@echo "gates passed"
 
 # --- local stack -----------------------------------------------------------

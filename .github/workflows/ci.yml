@@ -21,7 +21,7 @@ jobs:
     name: Gates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0   # contract-diff compares against the merge base
 
@@ -29,25 +29,40 @@ jobs:
       # system` and shell out to `uv run`, deliberately, so that the hook and
       # `make lint` use one pinned ruff. Without uv on PATH they fail with
       # "command not found".
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install
         run: uv sync --all-groups
 
+      - name: Cache hook environments
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
       - name: Custom gates
         run: make gates
 
-      - uses: pre-commit/action@v3.0.1
+      # `make hooks-run`, not `pre-commit/action`. The action installs
+      # pre-commit with `python -m pip install`, and after `uv sync` the python
+      # on PATH is the project venv, which uv builds without pip. It cannot
+      # work here.
+      #
+      # It would also be the wrong tool if it did work. The action installs an
+      # unpinned pre-commit outside the lockfile, which is the same two-versions
+      # problem the `language: system` hooks exist to avoid.
+      - name: Hooks
+        run: make hooks-run
 
   api:
     name: API
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 

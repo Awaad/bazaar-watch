@@ -10,7 +10,6 @@ migrations read one source of truth and no credential sits in a committed file.
 from __future__ import annotations
 
 import asyncio
-from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import Connection, pool
@@ -25,10 +24,8 @@ from bazaarwatch.core.settings import get_settings
 from bazaarwatch.modules.identity import models as identity_models  # noqa: F401
 
 config = context.config
-configure_logging(json_output=False)
 
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+configure_logging(json_output=False)
 
 target_metadata = Base.metadata
 

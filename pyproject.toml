@@ -16,11 +16,23 @@ dev = [
     "httpx>=0.28",
     "import-linter>=2.1",
     "pre-commit>=4.0",
+    # tools/gates/workflow-jobs.py. Present transitively via pre-commit
+    # already, which is not a dependency anyone should rely on.
+    "pyyaml>=6.0",
 ]
 
 [tool.ruff]
 line-length = 100
 target-version = "py313"
+# Gate fixtures are inputs, not source. Several of them contain the exact
+# mistake the gate exists to catch, so linting them would mean fixing the thing
+# under test.
+#
+# `force-exclude` is the point: without it an exclusion applies when ruff walks
+# the tree and not when a path is named explicitly, which is how pre-commit
+# invokes it, and `make lint` and the hook then disagree.
+extend-exclude = ["tools/gates/fixtures"]
+force-exclude = true
 # Migrations are not excluded. They are hand-written here, they are the most
 # consequential code in the repository, and an exclusion that applies to
 # directory traversal but not to explicitly named paths makes `make lint`
@@ -58,6 +70,7 @@ ignore = [
 "**/core/text.py" = ["RUF001", "RUF002"]
 "**/tests/test_text.py" = ["PLR2004", "RUF001", "RUF002"]
 "**/tests/test_fold_parity.py" = ["PLR2004", "RUF001", "RUF002"]
+"**/tests/test_slugify.py" = ["PLR2004", "RUF001", "RUF002"]
 # Gates are command-line tools. Printing is their output.
 "tools/gates/*.py" = ["T201"]
 

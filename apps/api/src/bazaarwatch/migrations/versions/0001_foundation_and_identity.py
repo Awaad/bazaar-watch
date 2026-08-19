@@ -73,7 +73,7 @@ BEGIN
     END IF;
 END
 $$;
-""".format(extensions=", ".join(f"'{name}'" for name in REQUIRED_EXTENSIONS))
+"""
 
 
 def upgrade() -> None:

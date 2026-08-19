@@ -11,8 +11,11 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.13"
-  NODE_VERSION: "22"
 
+# Every step runs a `make` target rather than an inlined command, so CI and a
+# laptop run the same thing. An inlined command drifts from the Makefile the
+# first time either is edited, and the drift is invisible until CI passes
+# something that fails locally, or the reverse.
 jobs:
   gates:
     name: Gates
@@ -22,20 +25,23 @@ jobs:
         with:
           fetch-depth: 0   # contract-diff compares against the merge base
 
-      - uses: actions/setup-python@v5
+      # uv is required before pre-commit, not after: four hooks are `language:
+      # system` and shell out to `uv run`, deliberately, so that the hook and
+      # `make lint` use one pinned ruff. Without uv on PATH they fail with
+      # "command not found".
+      - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Install
+        run: uv sync --all-groups
+
       - name: Custom gates
-        run: |
-          bash tools/gates/no-naive-casing.sh
-          bash tools/gates/no-float-money.sh
-          bash tools/gates/no-naive-datetime.sh
-          python tools/gates/updated-at-triggers.py
+        run: make gates
 
       - uses: pre-commit/action@v3.0.1
 
-api:
+  api:
     name: API
     runs-on: ubuntu-latest
     steps:
@@ -45,14 +51,17 @@ api:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      # --all-groups, not --all-extras. The toolchain lives in
+      # [dependency-groups], and extras are a different mechanism: mypy, pytest
+      # and import-linter are not extras of anything.
       - name: Install
-        run: uv sync --all-extras
+        run: uv sync --all-groups
 
       - name: Types
-        run: cd apps/api && MYPYPATH=src uv run mypy --strict src/bazaarwatch
+        run: make typecheck
 
       - name: Module boundaries
-        run: cd apps/api && PYTHONPATH=src uv run lint-imports --config pyproject.toml
+        run: make boundaries
 
       - name: Tests
-        run: uv run pytest
+        run: make test

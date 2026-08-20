@@ -15,6 +15,7 @@ import uuid
 
 from sqlalchemy import DateTime, MetaData, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.types import UserDefinedType
 
 from bazaarwatch.core.ids import new_id
 
@@ -64,3 +65,19 @@ def updated_at_column() -> Mapped[dt.datetime]:
         nullable=False,
         server_default=func.now(),
     )
+
+
+class Ltree(UserDefinedType[str]):
+    """Postgres `ltree`, which SQLAlchemy has no built-in type for.
+
+    Only the DDL spelling is needed. Values are produced by a trigger and read
+    back as text, so no bind or result processing is defined: adding either
+    would imply the application writes these columns, which it does not.
+    """
+
+    cache_ok = True
+
+    def get_col_spec(self, **kw: object) -> str:  # noqa: ARG002
+        # `kw` carries dialect options this type has none of. The signature is
+        # SQLAlchemy's, not ours.
+        return "LTREE"

@@ -261,17 +261,6 @@ index recomputed over a past period must still see the prices observed then. (AD
 ## 5. catalog
 
 ```sql
-CREATE TABLE brands (
-    id              UUID PRIMARY KEY DEFAULT uuidv7(),
-    slug            TEXT UNIQUE NOT NULL,
-    name            TEXT NOT NULL,
-    is_private_label BOOLEAN NOT NULL DEFAULT FALSE,
-    owner_chain_id  UUID REFERENCES chains(id),
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT private_label_has_owner
-        CHECK (NOT is_private_label OR owner_chain_id IS NOT NULL)
-);
-
 -- ADR-0089: a shape of the tree, named by every figure computed under it.
 -- `index_runs` and `index_values` both carry `taxonomy_version`; before this
 -- table they named an integer no row defined.
@@ -340,103 +329,166 @@ CREATE INDEX ix_category_structure_path ON category_structure USING GIST (path);
 CREATE INDEX ix_category_structure_parent
     ON category_structure (taxonomy_version, parent_id);
 
+-- Private label ownership lives here and nowhere else. `products` carried an
+-- `owner_chain_id` too, which was a second place to record one fact.
+CREATE TABLE brands (
+    id               UUID PRIMARY KEY DEFAULT uuidv7(),
+    slug             VARCHAR(64) UNIQUE NOT NULL,
+    name             VARCHAR(200) NOT NULL,
+    is_private_label BOOLEAN NOT NULL DEFAULT FALSE,
+    owner_chain_id   UUID REFERENCES chains(id) ON DELETE RESTRICT,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT private_label_has_owner
+        CHECK (NOT is_private_label OR owner_chain_id IS NOT NULL),
+    -- The converse. An owner on a brand that is not private label claims a
+    -- chain relationship the private-label rules will never apply.
+    CONSTRAINT owner_implies_private_label
+        CHECK (is_private_label OR owner_chain_id IS NULL)
+);
+
 CREATE TABLE products (
     id                 UUID PRIMARY KEY DEFAULT uuidv7(),
-    slug               TEXT UNIQUE NOT NULL,
-    canonical_name     TEXT NOT NULL,          -- Turkish, as it appears locally
-    brand_id           UUID REFERENCES brands(id),
-    category_id        UUID NOT NULL REFERENCES categories(id),
+    slug               VARCHAR(64) UNIQUE NOT NULL,
+    canonical_name     VARCHAR(300) NOT NULL,  -- Turkish, as it appears locally
+    brand_id           UUID REFERENCES brands(id) ON DELETE RESTRICT,
+    -- Category identity, not a node in one taxonomy version, so a restructure
+    -- does not move every product. See ADR-0089.
+    category_id        UUID NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
     net_content_value  NUMERIC(12,4),
-    net_content_uom    TEXT,                   -- 'g','kg','ml','l','piece'
-    unit_basis         TEXT NOT NULL DEFAULT 'per_piece'
+    net_content_uom    VARCHAR(8) CHECK (net_content_uom IS NULL
+                       OR net_content_uom IN ('g','kg','ml','l','piece')),
+    unit_basis         VARCHAR(16) NOT NULL DEFAULT 'per_piece'
                        CHECK (unit_basis IN ('per_l','per_kg','per_piece')),
-    owner_chain_id     UUID REFERENCES chains(id),   -- private label only
-    source             TEXT NOT NULL DEFAULT 'operator'
+    source             VARCHAR(16) NOT NULL DEFAULT 'operator'
                        CHECK (source IN ('operator','scrape','contributor')),
-    verification_state TEXT NOT NULL DEFAULT 'unverified'
+    verification_state VARCHAR(16) NOT NULL DEFAULT 'unverified'
                        CHECK (verification_state IN ('unverified','verified')),
-    status             TEXT NOT NULL DEFAULT 'active'
+    status             VARCHAR(16) NOT NULL DEFAULT 'active'
                        CHECK (status IN ('draft','active','merged','retired')),
-    merged_into_id     UUID REFERENCES products(id),
+    merged_into_id     UUID REFERENCES products(id) ON DELETE RESTRICT,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    CONSTRAINT merged_points_somewhere
-        CHECK (status <> 'merged' OR merged_into_id IS NOT NULL)
+    -- A per-kilogram or per-litre basis with no net content is a unit price
+    -- that cannot be computed, and unit price is what comparison ranks on.
+    CONSTRAINT unit_basis_needs_net_content
+        CHECK (unit_basis = 'per_piece'
+               OR (net_content_value IS NOT NULL AND net_content_uom IS NOT NULL)),
+    CONSTRAINT net_content_is_positive
+        CHECK (net_content_value IS NULL OR net_content_value > 0),
+    -- Both directions, so a live product cannot carry a merge target.
+    CONSTRAINT merged_iff_target
+        CHECK ((status = 'merged') = (merged_into_id IS NOT NULL)),
+    CONSTRAINT not_merged_into_itself
+        CHECK (merged_into_id IS NULL OR merged_into_id <> id)
 );
+CREATE INDEX ix_products_category_id ON products (category_id);
+CREATE INDEX ix_products_brand_id ON products (brand_id);
 
 CREATE TABLE product_gtins (
-    id           UUID PRIMARY KEY DEFAULT uuidv7(),
-    product_id   UUID NOT NULL REFERENCES products(id),
-    gtin         TEXT NOT NULL,
-    gtin_kind    TEXT NOT NULL
-                 CHECK (gtin_kind IN ('ean13','ean8','upc','plu','chain_internal')),
-    chain_id     UUID REFERENCES chains(id),   -- required for chain_internal namespace
-    is_primary   BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id         UUID PRIMARY KEY DEFAULT uuidv7(),
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    gtin       VARCHAR(64) NOT NULL,
+    gtin_kind  VARCHAR(16) NOT NULL
+               CHECK (gtin_kind IN ('ean13','ean8','upc','plu','chain_internal')),
+    chain_id   UUID REFERENCES chains(id) ON DELETE RESTRICT,
+    is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT internal_gtin_is_chain_scoped
         CHECK (gtin_kind <> 'chain_internal' OR chain_id IS NOT NULL)
 );
 -- Global namespace: one product per code.
-CREATE UNIQUE INDEX product_gtins_global_uq
+CREATE UNIQUE INDEX uq_product_gtins_global
     ON product_gtins (gtin, gtin_kind) WHERE gtin_kind <> 'chain_internal';
 -- Chain-internal namespace: codes legitimately collide across chains.
-CREATE UNIQUE INDEX product_gtins_chain_uq
+CREATE UNIQUE INDEX uq_product_gtins_chain
     ON product_gtins (chain_id, gtin) WHERE gtin_kind = 'chain_internal';
+-- One primary code per product. Without this, "the barcode to print" is a
+-- question with several answers and no way to choose.
+CREATE UNIQUE INDEX uq_product_gtins_primary
+    ON product_gtins (product_id) WHERE is_primary;
 
 CREATE TABLE product_aliases (
-    id           UUID PRIMARY KEY DEFAULT uuidv7(),
-    product_id   UUID NOT NULL REFERENCES products(id),
-    locale       TEXT NOT NULL,
-    alias_text   TEXT NOT NULL,
-    source       TEXT NOT NULL
-                 CHECK (source IN ('operator','contributor','mined','lexicon')),
-    status       TEXT NOT NULL DEFAULT 'active'
-                 CHECK (status IN ('pending','active','rejected')),
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id         UUID PRIMARY KEY DEFAULT uuidv7(),
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    locale     VARCHAR(8) NOT NULL CHECK (locale IN ('tr','en','ru','de','ar')),
+    -- Bounded because it sits inside a unique index: a btree entry caps around
+    -- 2704 bytes, so unbounded text fails at insert with an index size error
+    -- rather than a validation message.
+    alias_text VARCHAR(200) NOT NULL,
+    source     VARCHAR(16) NOT NULL
+               CHECK (source IN ('operator','contributor','mined','lexicon')),
+    status     VARCHAR(16) NOT NULL DEFAULT 'active'
+               CHECK (status IN ('pending','active','rejected')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (product_id, locale, alias_text)
 );
+CREATE INDEX ix_product_aliases_product_id ON product_aliases (product_id);
+
+-- Open set: halal, organic, imported, refrigerated, private_label. No CHECK,
+-- deliberately: docs/06 section 2 calls these an open set carrying no
+-- structural weight, and a constraint would make adding one a migration.
+CREATE TABLE product_facets (
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    facet      VARCHAR(32) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (product_id, facet)
+);
+CREATE INDEX ix_product_facets_facet ON product_facets (facet);
 
 -- Substitution grouping. 1L and 1.5L Coke are separate products, one group.
+-- Also how a shopper comparison includes private label from several chains
+-- while a fixed-identity basket item does not.
 CREATE TABLE product_groups (
     id         UUID PRIMARY KEY DEFAULT uuidv7(),
-    slug       TEXT UNIQUE NOT NULL,
-    name       TEXT NOT NULL,
+    slug       VARCHAR(64) UNIQUE NOT NULL,
+    name       VARCHAR(200) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE product_group_members (
-    group_id   UUID NOT NULL REFERENCES product_groups(id),
-    product_id UUID NOT NULL REFERENCES products(id),
+    group_id   UUID NOT NULL REFERENCES product_groups(id) ON DELETE RESTRICT,
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (group_id, product_id)
 );
 
 -- Dietary and national sets. Schema only until query logs justify curation.
 CREATE TABLE collections (
     id         UUID PRIMARY KEY DEFAULT uuidv7(),
-    slug       TEXT UNIQUE NOT NULL,
-    name_i18n  JSONB NOT NULL,
+    slug       VARCHAR(64) UNIQUE NOT NULL,
+    name_i18n  JSONB NOT NULL CHECK (name_i18n ? 'tr'),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE collection_members (
-    collection_id UUID NOT NULL REFERENCES collections(id),
-    product_id    UUID NOT NULL REFERENCES products(id),
+    collection_id UUID NOT NULL REFERENCES collections(id) ON DELETE RESTRICT,
+    product_id    UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (collection_id, product_id)
 );
 
 -- Materialised retrieval document. Rebuilt on product or alias change.
 CREATE TABLE product_search_docs (
-    product_id    UUID PRIMARY KEY REFERENCES products(id),
+    product_id    UUID PRIMARY KEY REFERENCES products(id) ON DELETE RESTRICT,
     lexical_text  TEXT NOT NULL,        -- Turkish-folded: canonical name + brand + aliases
     semantic_text TEXT NOT NULL,        -- unfolded natural language, embedding input
-    embedding     VECTOR,          -- dimension pinned by migration once ADR-0024 resolves
-    model_version TEXT NOT NULL,
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    embedding     VECTOR,               -- dimension pinned by migration once ADR-0024 resolves
+    -- Nullable and paired. Every row written before a model is chosen would
+    -- need a placeholder, and a placeholder in a NOT NULL column is a lie.
+    model_version VARCHAR(64),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- An unpinned `vector` accepts a 768-dimension row beside a 1024-dimension
+    -- one with no error, and the failure surfaces much later as an ALTER TYPE
+    -- that cannot succeed. The migration that pins the dimension drops this in
+    -- the same change and creates the HNSW index.
+    CONSTRAINT embedding_is_unset CHECK (embedding IS NULL),
+    CONSTRAINT model_version_iff_embedding
+        CHECK ((embedding IS NULL) = (model_version IS NULL))
 );
-CREATE INDEX product_search_lex_gix
+CREATE INDEX ix_product_search_docs_lexical
     ON product_search_docs USING GIN (lexical_text gin_trgm_ops);
--- HNSW requires a fixed dimension; this index is created by the migration that pins it.
--- CREATE INDEX product_search_emb_hnsw
---     ON product_search_docs USING hnsw (embedding vector_cosine_ops);
+-- HNSW requires a fixed dimension; created by the migration that pins it.
 ```
 
 `lexical_text` and `semantic_text` are deliberately different. The fold is lossy and

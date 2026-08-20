@@ -163,6 +163,7 @@ condition, not a feeling.
 | 0082 | Extraction runs supersede, never coexist | A second extraction of the same submission marks the first superseded and moves its observations to `superseded` in one transaction; without this every reprocessed receipt double-counts and the reprocessing strategy in 0013 and 0069 is unimplementable | Accepted |
 | 0083 | Operators require a second factor | They are the only role that reaches receipt originals and therefore the only role that sees PII; treating them as ordinary users with a wider role check would leave the most sensitive path the least protected, and every action they take is written to `audit_log` | Accepted |
 | 0088 | Index and comparison reach branches only through named selectables | The ADR-0045 and ADR-0023 exclusions are two predicates from two records that every index query must remember, and omitting either yields a plausible number rather than an error; a published wrong figure costs an erratum under 0079, so the exclusion is carried by `index_eligible_branches()` and `public_branches()` and enforced by the `branch-scope` gate | Accepted |
+| 0089 | Taxonomy structure is versioned, category identity is not | ADR-0079 rule 3 requires running two index series in parallel for three cycles, which means computing new values under the old tree; one mutable tree cannot do that, so `categories` holds stable identity and `category_structure` holds shape per version | Accepted |
 
 ## Open questions blocking Acceptance
 

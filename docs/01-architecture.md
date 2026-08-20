@@ -65,7 +65,7 @@ Dependency direction is downward only. `core` imports nothing from any domain mo
 | `core` | ids, money, Turkish fold, time, tuning loader, errors | nothing domain |
 | `identity` | users, trust | core |
 | `geo` | chains, branches, candidates | core |
-| `catalog` | products, taxonomy, brands, aliases, collections, search docs | core, identity |
+| `catalog` | products, taxonomy, brands, aliases, collections, search docs | core, identity, geo |
 | `lexicon` | chain lexicon | core, identity, geo, catalog |
 | `ingest` | submissions, media, receipts, lines | core, identity, geo |
 | `observations` | price observations | core, geo, catalog, lexicon, ingest |

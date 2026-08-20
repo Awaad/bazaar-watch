@@ -114,7 +114,6 @@ hand-maintained specification eventually lies about the implementation, and both
 | `branch-kind-predicate` | An index or comparison query over `price_observations` joined to `branches` without a `branch_kind` predicate |
 | `observation-status-predicate` | An aggregate over `price_observations` without a status predicate |
 | `i18n-parity` | A locale file missing keys present in another |
-| `taxonomy-i18n-complete` | A taxonomy version marked active with incomplete `name_i18n` |
 | `updated-at-triggers` | A table with `updated_at` and no trigger |
 | `privacy-invariant-tests` | The three adversarial tests are absent or skipped |
 | `pytest` | Any test failure. Testcontainers Postgres, never SQLite |

@@ -97,3 +97,10 @@ repos:
         language: system
         pass_filenames: false
         files: ^apps/api/src/bazaarwatch/(modules|migrations)/
+
+      - id: branch-scope
+        name: index and comparison reach branches only via geo.service (ADR-0088)
+        entry: uv run python tools/gates/branch-scope.py
+        language: system
+        pass_filenames: false
+        files: ^apps/api/src/bazaarwatch/

@@ -27,21 +27,20 @@ found even though it is correct.
 
 from __future__ import annotations
 
+import importlib
 import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path("apps/api/src").resolve()))
+SRC = Path("apps/api/src")
+sys.path.insert(0, str(SRC.resolve()))
 
-from sqlalchemy import CheckConstraint
+from sqlalchemy import CheckConstraint  # noqa: E402
 
-from bazaarwatch.core.models import Base
+from bazaarwatch.core.models import Base  # noqa: E402
 
-# Importing the models registers them on Base.metadata. Every module owning
-# tables belongs here; a module missing from this list is invisible to the gate.
-from bazaarwatch.modules.identity import models as _identity  # noqa: F401
-
-VERSIONS = Path("apps/api/src/bazaarwatch/migrations/versions")
+VERSIONS = SRC / "bazaarwatch" / "migrations" / "versions"
+MODULES = SRC / "bazaarwatch" / "modules"
 
 # `role IN ('contributor', 'moderator')`. Anything else is a CHECK expressing
 # something other than a vocabulary and is not this gate's business.
@@ -54,8 +53,22 @@ def _normalise(value: str) -> str:
     return _WHITESPACE.sub(" ", value).strip()
 
 
+def _register_every_model() -> None:
+    """Import every module's models so they land on `Base.metadata`.
+
+    Discovered rather than listed. A hand-maintained import list is one a module
+    can be missing from, and a module missing from it is invisible here: the
+    constraints exist, the gate counts fewer than there are, and it passes. That
+    is not hypothetical. This gate reported three constraints while `geo` had
+    added four more, and reported success.
+    """
+    for models_file in sorted(MODULES.glob("*/models.py")):
+        importlib.import_module(f"bazaarwatch.modules.{models_file.parent.name}.models")
+
+
 def enum_checks() -> list[tuple[str, str, str]]:
     """(table, constraint name, expression) for every enum-shaped CHECK."""
+    _register_every_model()
     found = []
     for table in Base.metadata.tables.values():
         for constraint in table.constraints:

@@ -52,6 +52,7 @@ gates: ## Run the custom silent-corruption gates
 	@uv run python tools/gates/updated-at-triggers.py
 	@uv run python tools/gates/workflow-jobs.py
 	@uv run python tools/gates/enum-parity.py
+	@uv run python tools/gates/branch-scope.py
 	@echo "gates passed"
 
 # --- local stack -----------------------------------------------------------

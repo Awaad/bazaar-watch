@@ -13,18 +13,23 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from decimal import Decimal
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
     Integer,
+    Numeric,
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
     text,
 )
@@ -32,7 +37,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from bazaarwatch.core.enums import SqlStrEnum
-from bazaarwatch.core.locales import REQUIRED_AT_WRITE
+from bazaarwatch.core.locales import REQUIRED_AT_WRITE, Locale
 from bazaarwatch.core.models import (
     Base,
     Ltree,
@@ -178,9 +183,374 @@ class CategoryStructure(Base):
     )
 
 
+class UnitBasis(SqlStrEnum):
+    """What a unit price is per. Comparison is per unit, never per pack."""
+
+    PER_L = "per_l"
+    PER_KG = "per_kg"
+    PER_PIECE = "per_piece"
+
+
+class UnitOfMeasure(SqlStrEnum):
+    GRAM = "g"
+    KILOGRAM = "kg"
+    MILLILITRE = "ml"
+    LITRE = "l"
+    PIECE = "piece"
+
+
+class ProductSource(SqlStrEnum):
+    OPERATOR = "operator"
+    SCRAPE = "scrape"
+    CONTRIBUTOR = "contributor"
+
+
+class VerificationState(SqlStrEnum):
+    UNVERIFIED = "unverified"
+    VERIFIED = "verified"
+
+
+class ProductStatus(SqlStrEnum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    MERGED = "merged"
+    RETIRED = "retired"
+
+
+class GtinKind(SqlStrEnum):
+    EAN13 = "ean13"
+    EAN8 = "ean8"
+    UPC = "upc"
+    PLU = "plu"
+    # Collides across chains by design, which is why it is namespaced.
+    CHAIN_INTERNAL = "chain_internal"
+
+
+class AliasSource(SqlStrEnum):
+    OPERATOR = "operator"
+    CONTRIBUTOR = "contributor"
+    MINED = "mined"
+    LEXICON = "lexicon"
+
+
+class AliasStatus(SqlStrEnum):
+    PENDING = "pending"
+    ACTIVE = "active"
+    REJECTED = "rejected"
+
+
+class Brand(Base):
+    """Private label ownership lives here and nowhere else.
+
+    `products` carried an `owner_chain_id` too, which was a second place to
+    record one fact. Private label is a property of the brand, and a
+    private-label product always has one.
+    """
+
+    __tablename__ = "brands"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    slug: Mapped[str] = mapped_column(String(SLUG_MAX_LENGTH), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    is_private_label: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    owner_chain_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("chains.id", ondelete="RESTRICT")
+    )
+    created_at: Mapped[dt.datetime] = created_at_column()
+
+    __table_args__ = (
+        CheckConstraint(
+            "NOT is_private_label OR owner_chain_id IS NOT NULL",
+            name="private_label_has_owner",
+        ),
+        # The other direction. An owner on a brand that is not private label is
+        # a claim about a chain that the private-label rules will not apply.
+        CheckConstraint(
+            "is_private_label OR owner_chain_id IS NULL",
+            name="owner_implies_private_label",
+        ),
+    )
+
+
+class Product(Base):
+    __tablename__ = "products"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    slug: Mapped[str] = mapped_column(String(SLUG_MAX_LENGTH), nullable=False, unique=True)
+    # Turkish, as it appears locally.
+    canonical_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    brand_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("brands.id", ondelete="RESTRICT")
+    )
+    # Points at identity, not at a node in one taxonomy version, so a
+    # restructure does not move every product. See ADR-0089.
+    category_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("categories.id", ondelete="RESTRICT"), nullable=False
+    )
+    net_content_value: Mapped[Decimal | None] = mapped_column(Numeric(precision=12, scale=4))
+    net_content_uom: Mapped[str | None] = mapped_column(String(8))
+    unit_basis: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=UnitBasis.PER_PIECE.value
+    )
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=ProductSource.OPERATOR.value
+    )
+    verification_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=VerificationState.UNVERIFIED.value
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=ProductStatus.ACTIVE.value
+    )
+    merged_into_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("products.id", ondelete="RESTRICT")
+    )
+    created_at: Mapped[dt.datetime] = created_at_column()
+    updated_at: Mapped[dt.datetime] = updated_at_column()
+
+    __table_args__ = (
+        CheckConstraint(UnitBasis.sql_check("unit_basis"), name="unit_basis_known"),
+        CheckConstraint(
+            f"net_content_uom IS NULL OR {UnitOfMeasure.sql_check('net_content_uom')}",
+            name="uom_known_if_present",
+        ),
+        CheckConstraint(ProductSource.sql_check("source"), name="source_known"),
+        CheckConstraint(
+            VerificationState.sql_check("verification_state"), name="verification_state_known"
+        ),
+        CheckConstraint(ProductStatus.sql_check("status"), name="status_known"),
+        # A per-kilogram or per-litre basis with no net content is a unit price
+        # that cannot be computed, and unit price is what comparison ranks on.
+        CheckConstraint(
+            "unit_basis = 'per_piece' "
+            "OR (net_content_value IS NOT NULL AND net_content_uom IS NOT NULL)",
+            name="unit_basis_needs_net_content",
+        ),
+        CheckConstraint(
+            "net_content_value IS NULL OR net_content_value > 0",
+            name="net_content_is_positive",
+        ),
+        # Both directions, so a live product cannot carry a merge target.
+        CheckConstraint(
+            "(status = 'merged') = (merged_into_id IS NOT NULL)",
+            name="merged_iff_target",
+        ),
+        CheckConstraint(
+            "merged_into_id IS NULL OR merged_into_id <> id", name="not_merged_into_itself"
+        ),
+        Index("ix_products_category_id", "category_id"),
+        Index("ix_products_brand_id", "brand_id"),
+    )
+
+
+class ProductGtin(Base):
+    __tablename__ = "product_gtins"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("products.id", ondelete="RESTRICT"), nullable=False
+    )
+    gtin: Mapped[str] = mapped_column(String(64), nullable=False)
+    gtin_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    chain_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("chains.id", ondelete="RESTRICT")
+    )
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    created_at: Mapped[dt.datetime] = created_at_column()
+
+    __table_args__ = (
+        CheckConstraint(GtinKind.sql_check("gtin_kind"), name="gtin_kind_known"),
+        CheckConstraint(
+            "gtin_kind <> 'chain_internal' OR chain_id IS NOT NULL",
+            name="internal_gtin_is_chain_scoped",
+        ),
+        # Global namespace: one product per code.
+        Index(
+            "uq_product_gtins_global",
+            "gtin",
+            "gtin_kind",
+            unique=True,
+            postgresql_where=text("gtin_kind <> 'chain_internal'"),
+        ),
+        # Chain-internal namespace: codes legitimately collide across chains.
+        Index(
+            "uq_product_gtins_chain",
+            "chain_id",
+            "gtin",
+            unique=True,
+            postgresql_where=text("gtin_kind = 'chain_internal'"),
+        ),
+        # One primary code per product. Without this, "the barcode to print" is
+        # a question with several answers and no way to choose.
+        Index(
+            "uq_product_gtins_primary",
+            "product_id",
+            unique=True,
+            postgresql_where=text("is_primary"),
+        ),
+    )
+
+
+class ProductAlias(Base):
+    __tablename__ = "product_aliases"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("products.id", ondelete="RESTRICT"), nullable=False
+    )
+    locale: Mapped[str] = mapped_column(String(8), nullable=False)
+    # Bounded, because it sits inside a unique index. A btree entry caps at
+    # roughly 2704 bytes, so unbounded text fails at insert with an index size
+    # error rather than a validation message.
+    alias_text: Mapped[str] = mapped_column(String(200), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=AliasStatus.ACTIVE.value
+    )
+    created_at: Mapped[dt.datetime] = created_at_column()
+
+    __table_args__ = (
+        CheckConstraint(Locale.sql_check("locale"), name="locale_known"),
+        CheckConstraint(AliasSource.sql_check("source"), name="source_known"),
+        CheckConstraint(AliasStatus.sql_check("status"), name="status_known"),
+        UniqueConstraint("product_id", "locale", "alias_text", name="uq_product_aliases_text"),
+        Index("ix_product_aliases_product_id", "product_id"),
+    )
+
+
+class ProductFacet(Base):
+    """Open set: halal, organic, imported, refrigerated, private_label.
+
+    No CHECK, deliberately. `docs/06-catalog-lexicon.md` section 2 calls facets
+    an open set that costs nothing and carries no structural weight, and a
+    constraint would make adding one a migration.
+    """
+
+    __tablename__ = "product_facets"
+
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("products.id", ondelete="RESTRICT"), primary_key=True
+    )
+    facet: Mapped[str] = mapped_column(String(32), primary_key=True)
+    created_at: Mapped[dt.datetime] = created_at_column()
+
+    __table_args__ = (Index("ix_product_facets_facet", "facet"),)
+
+
+class ProductGroup(Base):
+    """Substitution grouping. 1L and 1.5L Coke are separate products, one group.
+
+    Also the mechanism by which a shopper comparison can include private label
+    from several chains while a fixed-identity basket item cannot.
+    """
+
+    __tablename__ = "product_groups"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    slug: Mapped[str] = mapped_column(String(SLUG_MAX_LENGTH), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[dt.datetime] = created_at_column()
+
+
+class ProductGroupMember(Base):
+    __tablename__ = "product_group_members"
+
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("product_groups.id", ondelete="RESTRICT"), primary_key=True
+    )
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("products.id", ondelete="RESTRICT"), primary_key=True
+    )
+    created_at: Mapped[dt.datetime] = created_at_column()
+
+
+class Collection(Base):
+    """Dietary and national sets. Schema only until query logs justify curation."""
+
+    __tablename__ = "collections"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    slug: Mapped[str] = mapped_column(String(SLUG_MAX_LENGTH), nullable=False, unique=True)
+    name_i18n: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[dt.datetime] = created_at_column()
+
+    __table_args__ = (
+        CheckConstraint(f"name_i18n ? '{REQUIRED_AT_WRITE.value}'", name="has_turkish_name"),
+    )
+
+
+class CollectionMember(Base):
+    __tablename__ = "collection_members"
+
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("collections.id", ondelete="RESTRICT"), primary_key=True
+    )
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("products.id", ondelete="RESTRICT"), primary_key=True
+    )
+    created_at: Mapped[dt.datetime] = created_at_column()
+
+
+class ProductSearchDoc(Base):
+    """Materialised retrieval document. Rebuilt on product or alias change.
+
+    `lexical_text` and `semantic_text` are deliberately different. The fold is
+    lossy and correct for trigram; it degrades a model trained on natural
+    diacritics (ADR-0025).
+
+    The embedding column is unpinned because the model is not chosen (ADR-0024),
+    and an unpinned `vector` accepts a 768-dimension row beside a 1024-dimension
+    one with no error. `embedding_is_unset` is what stops that: it holds the
+    column empty until the migration that pins the dimension drops it and
+    creates the HNSW index in the same change.
+    """
+
+    __tablename__ = "product_search_docs"
+
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("products.id", ondelete="RESTRICT"), primary_key=True
+    )
+    # Turkish-folded: canonical name, brand and aliases.
+    lexical_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # Unfolded natural language, the embedding input.
+    semantic_text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[Any | None] = mapped_column(Vector)
+    # Nullable, unlike the data model's original NOT NULL. Every row written
+    # before a model is chosen would need a placeholder, and a placeholder in a
+    # NOT NULL column is a lie the schema tells.
+    model_version: Mapped[str | None] = mapped_column(String(64))
+    updated_at: Mapped[dt.datetime] = updated_at_column()
+
+    __table_args__ = (
+        CheckConstraint("embedding IS NULL", name="embedding_is_unset"),
+        CheckConstraint(
+            "(embedding IS NULL) = (model_version IS NULL)", name="model_version_iff_embedding"
+        ),
+    )
+
+
 __all__ = [
+    "AliasSource",
+    "AliasStatus",
+    "Brand",
     "Category",
     "CategoryStructure",
+    "Collection",
+    "CollectionMember",
+    "GtinKind",
+    "Product",
+    "ProductAlias",
+    "ProductFacet",
+    "ProductGroup",
+    "ProductGroupMember",
+    "ProductGtin",
+    "ProductSearchDoc",
+    "ProductSource",
+    "ProductStatus",
     "TaxonomyStatus",
     "TaxonomyVersion",
+    "UnitBasis",
+    "UnitOfMeasure",
+    "VerificationState",
 ]

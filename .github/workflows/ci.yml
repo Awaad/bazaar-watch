@@ -89,6 +89,13 @@ jobs:
     env:
       POSTGRES_PASSWORD: ci-not-a-secret
       DATABASE_URL: postgresql+psycopg://bazaarwatch:ci-not-a-secret@localhost:55432/bazaarwatch
+      # `migrations/env.py` loads the whole Settings object, so a migration
+      # cannot run without a Redis URL it never uses. There is no `.env` on a
+      # runner, so every required setting has to be here.
+      REDIS_URL: redis://localhost:56379/0
+      # Turns the skip into a failure. This is the job whose only purpose is to
+      # run these, so silence is the one outcome that must not look like success.
+      REQUIRE_INTEGRATION: "1"
     steps:
       - uses: actions/checkout@v7.0.1
 

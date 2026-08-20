@@ -53,14 +53,18 @@ def settings() -> Settings:
 
 
 def _unavailable(reason: str) -> NoReturn:
-    """Skip locally, fail in CI.
+    """Skip by default, fail when integration coverage was explicitly asked for.
 
-    On a laptop, `make test` must work with nothing running, so these skip. In
-    CI a skipped integration suite is indistinguishable from a passing one, and
-    that is how the fold parity check stayed unrun for four slices.
+    A skipped integration suite is indistinguishable from a passing one, which
+    is how the fold parity check stayed unrun for four slices. So the job that
+    exists to run these sets `REQUIRE_INTEGRATION` and gets a failure instead.
+
+    Keyed on that rather than on `CI`, because CI also runs `make test`, which
+    is supposed to work with no database at all. Keying on `CI` made the unit
+    job fail for the deliberate absence of the thing it does not need.
     """
-    if os.environ.get("CI"):
-        pytest.fail(f"integration tests cannot run in CI: {reason}")
+    if os.environ.get("REQUIRE_INTEGRATION"):
+        pytest.fail(f"integration tests were required but cannot run: {reason}")
     pytest.skip(reason)
 
 
@@ -100,6 +104,26 @@ def _server_description(url: str) -> str:
     return f"{version}\nmissing extensions: {missing or 'none'}"
 
 
+def _migration_env(url: str) -> dict[str, str]:
+    """The environment the migration subprocess runs with.
+
+    `migrations/env.py` loads the whole `Settings` object, so a migration will
+    not start without a Redis URL that no migration touches. A developer with a
+    `.env` never notices; a fresh clone with only `DATABASE_URL` exported fails
+    on a validation error about Redis, which says nothing about the actual
+    problem.
+
+    A placeholder is supplied rather than left to chance. It is never connected
+    to. The coupling itself is worth removing at some point: configuration for
+    the cache should not be a precondition for changing the schema.
+    """
+    return {
+        **os.environ,
+        "DATABASE_URL": url,
+        "REDIS_URL": os.environ.get("REDIS_URL", "redis://127.0.0.1:1/0"),
+    }
+
+
 @pytest.fixture(scope="session")
 def migrated_engine() -> Iterator[Engine]:
     url = _base_url()
@@ -128,7 +152,7 @@ def migrated_engine() -> Iterator[Engine]:
     result = subprocess.run(
         [sys.executable, "-m", "alembic", "-c", str(ALEMBIC_INI), "upgrade", "head"],
         cwd=REPO_ROOT,
-        env={**os.environ, "DATABASE_URL": url},
+        env=_migration_env(url),
         capture_output=True,
         text=True,
         check=False,

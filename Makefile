@@ -137,8 +137,8 @@ boundaries: ## Enforce module boundaries (docs/01-architecture.md)
 	PYTHONPATH=apps/api/src uv run lint-imports --config apps/api/pyproject.toml
 
 .PHONY: test
-test: ## Run the test suite
-	uv run pytest
+test: ## Run the test suite. No database needed.
+	uv run pytest -m "not integration"
 
 .PHONY: test-integration
 test-integration: ## Run the tests that need Postgres. Requires `make up`.

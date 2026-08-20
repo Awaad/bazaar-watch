@@ -20,6 +20,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    Uuid,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -108,7 +109,7 @@ class SubjectKey(Base):
     __tablename__ = "subject_keys"
 
     user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), primary_key=True
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT"), primary_key=True
     )
     kek_ref: Mapped[str | None] = mapped_column(Text)
     shredded_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
@@ -130,7 +131,7 @@ class ContributorTrust(Base):
     __tablename__ = "contributor_trust"
 
     user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), primary_key=True
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT"), primary_key=True
     )
     submission_accuracy: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
     review_accuracy: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
@@ -158,7 +159,7 @@ class PushToken(Base):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+        Uuid, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
     platform: Mapped[str] = mapped_column(String(8), nullable=False)
     token: Mapped[str] = mapped_column(Text, nullable=False)

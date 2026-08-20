@@ -94,15 +94,12 @@ def test_every_gate_script_is_registered() -> None:
 
 
 BRANCH_SCOPE = FIXTURES / "branch-scope" / "modules"
+UPDATED_AT = FIXTURES / "updated-at-triggers"
 
 
 @pytest.mark.parametrize(
     "fixture",
-    [
-        "indexing/violation_orm.py",
-        "search/violation_sql.py",
-        "economy/violation_sql.py",
-    ],
+    ["indexing/violation_orm.py", "search/violation_sql.py", "economy/violation_sql.py"],
 )
 def test_branch_scope_gate_fires(fixture: str) -> None:
     result = _run("branch-scope.py", str(BRANCH_SCOPE / fixture))
@@ -137,43 +134,39 @@ def test_branch_scope_gate_passes_against_the_real_tree() -> None:
     assert result.returncode == 0, result.stdout
 
 
-UPDATED_AT = FIXTURES / "updated-at-triggers"
+def _found(*fixtures: str) -> set[str]:
+    result = _run("updated-at-triggers.py", "--found", *[str(UPDATED_AT / f) for f in fixtures])
+    return set(result.stdout.split())
 
 
-def test_updated_at_gate_fires_on_a_table_with_no_trigger() -> None:
-    result = _run("updated-at-triggers.py", str(UPDATED_AT / "missing-trigger.py"))
-    assert result.returncode == 1, result.stdout
-    assert "widgets" in result.stdout
-
-
-def test_updated_at_gate_resolves_a_loop_over_a_module_constant() -> None:
+def test_updated_at_gate_sees_a_trigger_loop_over_a_module_constant() -> None:
     """The f-string in the loop never spells the trigger name out. Requiring it
-    to would mean shaping migrations to suit a regex."""
-    result = _run("updated-at-triggers.py", str(UPDATED_AT / "loop-over-constant.py"))
-    assert result.returncode == 0, result.stdout
-
-
-def test_updated_at_gate_passes_against_the_real_migrations() -> None:
-    result = _run("updated-at-triggers.py")
-    assert result.returncode == 0, result.stdout
+    to would mean shaping migrations to suit a parser."""
+    assert _found("loop-over-constant.py") == {"widgets"}
 
 
 def test_updated_at_gate_resolves_each_revisions_own_constant() -> None:
     """Two revisions can both call their tuple `_UPDATED_AT_TABLES`. Resolving
-    it against the concatenated source finds the first assignment and reports
-    the later revision's tables as uncovered, which is what happened when
-    migration 0004 arrived."""
-    result = _run(
-        "updated-at-triggers.py",
-        str(UPDATED_AT / "loop-over-constant.py"),
-        str(UPDATED_AT / "second-revision-same-constant.py"),
-    )
-    assert result.returncode == 0, result.stdout
+    it against the concatenated source finds the first and misses the rest."""
+    assert _found("loop-over-constant.py", "second-revision-same-constant.py") == {
+        "widgets",
+        "gadgets",
+    }
 
 
 def test_updated_at_gate_does_not_care_about_formatting() -> None:
-    """Three earlier versions matched text and misfired three times, the last on
-    where `op.create_table(...)` puts its closing paren. Both tables here are
-    covered, in a file ruff would accept and the old regex could not read."""
-    result = _run("updated-at-triggers.py", str(UPDATED_AT / "awkward-formatting.py"))
+    """An earlier version matched where `op.create_table(...)` put its closing
+    parenthesis, and called a correct migration broken."""
+    assert _found("awkward-formatting.py") == {"widgets", "sprockets"}
+
+
+def test_updated_at_gate_finds_nothing_when_no_trigger_is_created() -> None:
+    assert _found("missing-trigger.py") == set()
+
+
+def test_updated_at_gate_passes_against_the_real_migrations() -> None:
+    """Which tables need a trigger comes from the ORM metadata now. Parsing it
+    out of the migrations made the gate blind to a column written by a helper,
+    and it passed while missing two tables in migration 0005."""
+    result = _run("updated-at-triggers.py")
     assert result.returncode == 0, result.stdout

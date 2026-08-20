@@ -9,12 +9,19 @@ A table created with the column and no trigger takes `DEFAULT now()` on insert
 and then never changes again. Nothing errors, no test fails, and the staleness
 of every row derived from it is quietly wrong.
 
-This reads the AST rather than matching text. Three earlier versions matched
-regexes against the source and misfired three times: on a trigger loop over a
-module constant, on two revisions sharing a constant name, and on the exact
-layout of a `op.create_table(...)` call. Each false positive was harmless and
-each cost time, and formatting is not something a gate should have opinions
-about.
+Which tables need a trigger comes from `Base.metadata`, not from the migrations.
+Parsing the migrations for it was wrong in a way that mattered: a column written
+by a helper rather than as a literal `sa.Column("updated_at", ...)` was invisible,
+so the gate reported fewer tables than exist and passed. A false negative here is
+worse than any false positive, because the whole point is to catch a table nobody
+gave a trigger.
+
+Which tables have one is still read from the migration AST, because a trigger is
+not something the ORM knows about. Three earlier versions matched regexes for
+that and misfired three times: on a trigger loop over a module constant, on two
+revisions sharing a constant name, and on the exact layout of a
+`op.create_table(...)` call. Formatting is not something a gate should have
+opinions about.
 
 Resolution is per file. Two revisions may both name their tuple
 `_UPDATED_AT_TABLES`, and looking it up in the concatenated source finds
@@ -24,10 +31,17 @@ whichever came first.
 from __future__ import annotations
 
 import ast
+import importlib
 import sys
 from pathlib import Path
 
-VERSIONS = Path("apps/api/src/bazaarwatch/migrations/versions")
+SRC = Path("apps/api/src")
+sys.path.insert(0, str(SRC.resolve()))
+
+from bazaarwatch.core.models import Base  # noqa: E402
+
+VERSIONS = SRC / "bazaarwatch" / "migrations" / "versions"
+MODULES = SRC / "bazaarwatch" / "modules"
 
 TRIGGER_MARKERS = ("CREATE TRIGGER", "BEFORE UPDATE ON")
 
@@ -97,21 +111,17 @@ def _creates_a_trigger(node: ast.AST) -> bool:
     )
 
 
-def tables_needing_a_trigger(tree: ast.Module) -> set[str]:
-    tables = set()
-    for node in ast.walk(tree):
-        if not _is_call(node, attr="create_table"):
-            continue
-        assert isinstance(node, ast.Call)
-        name = _first_string_arg(node)
-        if name is None:
-            continue
-        for argument in node.args[1:]:
-            if _is_call(argument, attr="Column"):
-                assert isinstance(argument, ast.Call)
-                if _first_string_arg(argument) == "updated_at":
-                    tables.add(name)
-    return tables
+def tables_needing_a_trigger() -> set[str]:
+    """Every mapped table carrying an `updated_at` column.
+
+    Discovered by importing each module's models rather than from a list, for
+    the reason `enum-parity` does the same: a module missing from a hand
+    maintained list is invisible, and the gate then passes while blind.
+    """
+    for models_file in sorted(MODULES.glob("*/models.py")):
+        importlib.import_module(f"bazaarwatch.modules.{models_file.parent.name}.models")
+
+    return {table.name for table in Base.metadata.tables.values() if "updated_at" in table.c}
 
 
 def tables_with_a_trigger(tree: ast.Module) -> set[str]:
@@ -151,7 +161,7 @@ def tables_with_a_trigger(tree: ast.Module) -> set[str]:
 
 
 def check(paths: list[Path]) -> list[str]:
-    needs: set[str] = set()
+    needs = tables_needing_a_trigger()
     has: set[str] = set()
     problems: list[str] = []
 
@@ -161,7 +171,6 @@ def check(paths: list[Path]) -> list[str]:
         except SyntaxError as exc:
             problems.append(f"{path}: could not be parsed: {exc}")
             continue
-        needs |= tables_needing_a_trigger(tree)
         has |= tables_with_a_trigger(tree)
 
     problems += [
@@ -171,6 +180,19 @@ def check(paths: list[Path]) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    # `--found` prints the tables the given files create a trigger for, without
+    # comparing against the ORM. The fixtures need it: now that "needs a
+    # trigger" comes from real metadata, running the gate over one fictional
+    # migration would always report the ten real tables as uncovered, and the
+    # fixture would fire for a reason that has nothing to do with what it tests.
+    if argv and argv[0] == "--found":
+        found: set[str] = set()
+        for path in (Path(a) for a in argv[1:]):
+            found |= tables_with_a_trigger(ast.parse(path.read_text(encoding="utf-8")))
+        for table in sorted(found):
+            print(table)
+        return 0
+
     if argv:
         paths = [Path(arg) for arg in argv]
     elif VERSIONS.is_dir():
@@ -187,14 +209,7 @@ def main(argv: list[str]) -> int:
         print("     FOR EACH ROW EXECUTE FUNCTION set_updated_at();")
         return 1
 
-    covered = len(
-        {
-            t
-            for p in paths
-            for t in tables_needing_a_trigger(ast.parse(p.read_text(encoding="utf-8")))
-        }
-    )
-    print(f"updated_at triggers: {covered} table(s) checked, all covered")
+    print(f"updated_at triggers: {len(tables_needing_a_trigger())} table(s), all covered")
     return 0
 
 

@@ -120,85 +120,129 @@ who approve indiscriminately, which is what stops peer review becoming a rubber 
 ```sql
 CREATE TABLE chains (
     id                 UUID PRIMARY KEY DEFAULT uuidv7(),
-    slug               TEXT UNIQUE NOT NULL,
-    name               TEXT NOT NULL,
-    pos_vendor         TEXT,                   -- receipt layout is per POS, not per chain
+    slug               VARCHAR(64) UNIQUE NOT NULL,
+    name               VARCHAR(200) NOT NULL,
+    pos_vendor         VARCHAR(64),            -- receipt layout is per POS, not per chain
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE branches (
     id                 UUID PRIMARY KEY DEFAULT uuidv7(),
-    chain_id           UUID NOT NULL REFERENCES chains(id),
-    slug               TEXT UNIQUE NOT NULL,
-    name               TEXT NOT NULL,
-    branch_kind        TEXT NOT NULL DEFAULT 'physical'
+    chain_id           UUID NOT NULL REFERENCES chains(id) ON DELETE RESTRICT,
+    slug               VARCHAR(64) UNIQUE NOT NULL,
+    name               VARCHAR(200) NOT NULL,
+    branch_kind        VARCHAR(16) NOT NULL DEFAULT 'physical'
                        CHECK (branch_kind IN ('physical','online')),
     geom               geography(Point, 4326),
     address            TEXT,
     city               TEXT,
-    source_provider    TEXT,                   -- 'overture' | 'manual' | 'scrape'
-    source_id          TEXT,
+    source_provider    VARCHAR(32),            -- 'overture' | 'manual' | 'scrape'
+    source_id          VARCHAR(128),
     source_confidence  NUMERIC(4,3),
-    operating_status   TEXT NOT NULL DEFAULT 'open'
+    operating_status   VARCHAR(24) NOT NULL DEFAULT 'open'
                        CHECK (operating_status IN ('open','temporarily_closed','permanently_closed')),
     verified_by_human  BOOLEAN NOT NULL DEFAULT FALSE,
-    verified_by        UUID REFERENCES users(id),
+    verified_by        UUID REFERENCES users(id) ON DELETE RESTRICT,
     verified_at        TIMESTAMPTZ,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
 
-    CONSTRAINT physical_branch_has_geom
+    CONSTRAINT physical_has_geom
         CHECK (branch_kind <> 'physical' OR geom IS NOT NULL),
-    CONSTRAINT online_branch_has_no_geom
-        CHECK (branch_kind <> 'online' OR geom IS NULL)
+    CONSTRAINT online_has_no_geom
+        CHECK (branch_kind <> 'online' OR geom IS NULL),
+    -- Verification is an operator action with an actor and a time. A true flag
+    -- with neither recorded is a claim nobody made, and it gates every
+    -- published figure.
+    CONSTRAINT verification_has_an_actor
+        CHECK (NOT verified_by_human OR (verified_by IS NOT NULL AND verified_at IS NOT NULL)),
+    CONSTRAINT confidence_in_range
+        CHECK (source_confidence IS NULL OR source_confidence BETWEEN 0 AND 1)
 );
 
-CREATE UNIQUE INDEX branches_source_uq
+-- Partial: manual entry is a first-class path and carries no source key, so a
+-- total unique index would allow exactly one manually entered branch.
+CREATE UNIQUE INDEX uq_branches_source
     ON branches (source_provider, source_id)
     WHERE source_id IS NOT NULL;
 
-CREATE INDEX branches_geom_gix ON branches USING GIST (geom);
+CREATE INDEX ix_branches_geom ON branches USING GIST (geom);
+CREATE INDEX ix_branches_chain_id ON branches (chain_id);
 
 -- Pipeline output. Never joined to prices. Promotion to `branches` is explicit.
 CREATE TABLE branch_candidates (
     id                 UUID PRIMARY KEY DEFAULT uuidv7(),
-    source_provider    TEXT NOT NULL,
-    source_id          TEXT NOT NULL,
+    source_provider    VARCHAR(32) NOT NULL,
+    source_id          VARCHAR(128) NOT NULL,
     raw                JSONB NOT NULL,
-    name               TEXT,
+    name               VARCHAR(200),
     geom               geography(Point, 4326),
-    suggested_chain_id UUID REFERENCES chains(id),
-    operating_status   TEXT,
+    suggested_chain_id UUID REFERENCES chains(id) ON DELETE RESTRICT,
+    operating_status   VARCHAR(24),
     source_confidence  NUMERIC(4,3),
-    status             TEXT NOT NULL DEFAULT 'pending'
+    status             VARCHAR(16) NOT NULL DEFAULT 'pending'
                        CHECK (status IN ('pending','promoted','rejected','duplicate')),
-    promoted_branch_id UUID REFERENCES branches(id),
+    promoted_branch_id UUID REFERENCES branches(id) ON DELETE RESTRICT,
+    -- The survivor. ADR-0023 marks a duplicate with a reference to it, so a
+    -- re-run does not resurrect the row and an operator can see what it was
+    -- folded into.
+    duplicate_of_id    UUID REFERENCES branch_candidates(id) ON DELETE RESTRICT,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (source_provider, source_id)
+    -- Re-runs upsert on the source key and operators move status, so the row
+    -- mutates. Without this there is nothing to sort stale candidates by.
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (source_provider, source_id),
+    -- Nullable, because a provider may say nothing. When it does, ingest
+    -- normalises to our vocabulary rather than storing the provider spelling.
+    CONSTRAINT status_known_if_present
+        CHECK (operating_status IS NULL
+               OR operating_status IN ('open','temporarily_closed','permanently_closed')),
+    CONSTRAINT confidence_in_range
+        CHECK (source_confidence IS NULL OR source_confidence BETWEEN 0 AND 1),
+    -- Both directions, so a rejected candidate cannot carry a branch reference
+    -- and a promoted one cannot lack it.
+    CONSTRAINT promoted_iff_branch
+        CHECK ((status = 'promoted') = (promoted_branch_id IS NOT NULL)),
+    CONSTRAINT duplicate_iff_survivor
+        CHECK ((status = 'duplicate') = (duplicate_of_id IS NOT NULL)),
+    -- Following the survivor chain must terminate.
+    CONSTRAINT not_its_own_duplicate
+        CHECK (duplicate_of_id IS NULL OR duplicate_of_id <> id)
 );
+
+CREATE INDEX ix_branch_candidates_status ON branch_candidates (status);
 ```
 
 ```sql
 -- ADR-0052: fixed ordinal dimensions, no free text.
 CREATE TABLE branch_attribute_ratings (
     id             UUID PRIMARY KEY DEFAULT uuidv7(),
-    branch_id      UUID NOT NULL REFERENCES branches(id),
-    contributor_id UUID NOT NULL REFERENCES users(id),
-    dimension      TEXT NOT NULL
+    branch_id      UUID NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
+    contributor_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    dimension      VARCHAR(24) NOT NULL
                    CHECK (dimension IN ('produce_freshness','stock_breadth','queue_length')),
     score          SMALLINT NOT NULL CHECK (score BETWEEN 1 AND 5),
     observed_at    TIMESTAMPTZ NOT NULL,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (branch_id, contributor_id, dimension, observed_at)
 );
-CREATE INDEX branch_attr_recent_ix
+CREATE INDEX ix_branch_attribute_ratings_recent
     ON branch_attribute_ratings (branch_id, dimension, observed_at DESC);
 ```
 
 Ordinal only, recency-weighted on read, and suppressed below a minimum sample count. Rigorously
 excluded from any index computation: a subjective quality rating contaminating a published
 inflation figure would destroy its defensibility (ADR-0029, ADR-0052).
+
+The unique key is an **idempotency guard against a resubmitted rating, not a rate limit**, and it
+cannot be one: the same contributor can rate the same branch fifty times a day at different
+timestamps and every row is legal. The aggregate handles it instead. **One rating per contributor
+per dimension counts, the most recent within the window.** Fifty submissions become one vote, and
+manipulation then requires multiple accounts, which is the general problem already carried by phone
+OTP, device fingerprinting and the trust model rather than a new special case. This is not
+inferable from the constraint, which is why it is written here.
 
 No price attaches to a branch with `verified_by_human = FALSE`. Open map data has closed
 stores, wrong pins, and cross-provider duplicates, and access-scoped comparison means a
@@ -207,6 +251,12 @@ mis-pinned branch corrupts results rather than merely showing a wrong dot. (ADR-
 Online branches are real price sources and appear in item lookup and history, but are
 excluded from access-scoped basket comparison and from per-category chain indices, because
 an online seller's pricing is not evidence about the physical market. (ADR-0045)
+
+Those two exclusions are **not predicates that each query writes**. Index and comparison code
+reaches branches through `geo.service.index_eligible_branches()` (physical and verified) or
+`geo.service.public_branches()` (verified, any kind), and the `branch-scope` gate enforces it.
+Neither scope filters `operating_status`: a permanently closed branch has real history, and an
+index recomputed over a past period must still see the prices observed then. (ADR-0088)
 
 ## 5. catalog
 

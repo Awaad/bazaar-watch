@@ -1,7 +1,8 @@
 # ADR Index
 
 > Working name "Bazaar Watch"; replace globally once branding is decided.
-> Baseline v1.0, accepted 2026-08-17. All 87 records are Accepted. Five carry a named open
+> Baseline v1.0, accepted 2026-08-17. All 87 records are Accepted. 0088 was added during
+> implementation, when the gate `docs/15` described turned out to be unwritable as specified. Five carry a named open
 > parameter, which is a value still to be measured rather than a decision still to be made; the
 > decision in each of those is settled and the parameter cannot change it.
 > Changing an Accepted record requires a superseding ADR, never an edit in place.
@@ -161,6 +162,7 @@ condition, not a feeling.
 | 0081 | Reconciliation is KDV-inclusive | TRNC receipts print prices inclusive of KDV and show tax as an informational breakdown; treating it as an addend makes every healthy receipt fail reconciliation, disabling the strongest integrity signal in the system | Accepted |
 | 0082 | Extraction runs supersede, never coexist | A second extraction of the same submission marks the first superseded and moves its observations to `superseded` in one transaction; without this every reprocessed receipt double-counts and the reprocessing strategy in 0013 and 0069 is unimplementable | Accepted |
 | 0083 | Operators require a second factor | They are the only role that reaches receipt originals and therefore the only role that sees PII; treating them as ordinary users with a wider role check would leave the most sensitive path the least protected, and every action they take is written to `audit_log` | Accepted |
+| 0088 | Index and comparison reach branches only through named selectables | The ADR-0045 and ADR-0023 exclusions are two predicates from two records that every index query must remember, and omitting either yields a plausible number rather than an error; a published wrong figure costs an erratum under 0079, so the exclusion is carried by `index_eligible_branches()` and `public_branches()` and enforced by the `branch-scope` gate | Accepted |
 
 ## Open questions blocking Acceptance
 

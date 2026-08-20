@@ -272,19 +272,73 @@ CREATE TABLE brands (
         CHECK (NOT is_private_label OR owner_chain_id IS NOT NULL)
 );
 
+-- ADR-0089: a shape of the tree, named by every figure computed under it.
+-- `index_runs` and `index_values` both carry `taxonomy_version`; before this
+-- table they named an integer no row defined.
+CREATE TABLE taxonomy_versions (
+    version      INTEGER PRIMARY KEY,
+    status       VARCHAR(16) NOT NULL DEFAULT 'draft'
+                 CHECK (status IN ('draft','active','superseded')),
+    activated_at TIMESTAMPTZ,
+    notes        TEXT,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Without this an active version can carry no activation time, and the
+    -- announcement date ADR-0079 rule 2 requires has nowhere to come from.
+    CONSTRAINT activated_iff_not_draft
+        CHECK ((status = 'draft') = (activated_at IS NULL))
+);
+
+-- At most one active version. ADR-0079 rule 3 runs two series in parallel, but
+-- the second is computed under a draft or superseded version.
+CREATE UNIQUE INDEX uq_taxonomy_versions_active
+    ON taxonomy_versions (status) WHERE status = 'active';
+
+-- Identity. Stable across restructures, and what a product points at. No status
+-- column: membership in a version's structure is what makes a node live.
 CREATE TABLE categories (
     id               UUID PRIMARY KEY DEFAULT uuidv7(),
-    parent_id        UUID REFERENCES categories(id),
-    slug             TEXT UNIQUE NOT NULL,
-    path             LTREE NOT NULL,
-    name_i18n        JSONB NOT NULL,           -- {"tr": "...", "en": "...", "ru": "...", "de": "..."}
-    taxonomy_version INTEGER NOT NULL,
-    sort_order       INTEGER NOT NULL DEFAULT 0,
-    status           TEXT NOT NULL DEFAULT 'active'
-                     CHECK (status IN ('active','retired')),
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+    -- Globally unique and stable, because it is a URL.
+    slug             VARCHAR(64) UNIQUE NOT NULL,
+    name_i18n        JSONB NOT NULL,
+    -- Where a merged node's history went. Same shape as duplicate_of_id.
+    superseded_by_id UUID REFERENCES categories(id) ON DELETE RESTRICT,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- `tr` at write; the remaining launch locales before a version is
+    -- activated, which spans rows and is therefore a trigger.
+    CONSTRAINT has_turkish_name CHECK (name_i18n ? 'tr'),
+    CONSTRAINT not_its_own_successor
+        CHECK (superseded_by_id IS NULL OR superseded_by_id <> id)
 );
-CREATE INDEX categories_path_gix ON categories USING GIST (path);
+
+-- Shape, per version. Two trees coexist as two sets of rows.
+CREATE TABLE category_structure (
+    category_id      UUID NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
+    taxonomy_version INTEGER NOT NULL
+                     REFERENCES taxonomy_versions(version) ON DELETE RESTRICT,
+    parent_id        UUID,
+    -- Derived, maintained by trigger, never written by the application. Labels
+    -- are the slug with hyphens mapped to underscores, which cannot collide
+    -- because slugify never emits an underscore.
+    path             LTREE NOT NULL,
+    sort_order       SMALLINT NOT NULL DEFAULT 0,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    PRIMARY KEY (category_id, taxonomy_version),
+    -- Composite, so a parent is necessarily a node in the same version. A plain
+    -- reference to categories would let a path be built across two trees.
+    FOREIGN KEY (parent_id, taxonomy_version)
+        REFERENCES category_structure(category_id, taxonomy_version) ON DELETE RESTRICT,
+    CONSTRAINT not_its_own_parent
+        CHECK (parent_id IS NULL OR parent_id <> category_id)
+);
+
+CREATE INDEX ix_category_structure_path ON category_structure USING GIST (path);
+CREATE INDEX ix_category_structure_parent
+    ON category_structure (taxonomy_version, parent_id);
 
 CREATE TABLE products (
     id                 UUID PRIMARY KEY DEFAULT uuidv7(),

@@ -80,3 +80,37 @@ jobs:
 
       - name: Tests
         run: make test
+
+  integration:
+    name: Integration
+    runs-on: ubuntu-latest
+    # One set of credentials for compose and for the tests. Splitting them is
+    # how a password ends up written twice and disagreeing with itself.
+    env:
+      POSTGRES_PASSWORD: ci-not-a-secret
+      DATABASE_URL: postgresql+psycopg://bazaarwatch:ci-not-a-secret@localhost:55432/bazaarwatch
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install
+        run: uv sync --all-groups
+
+      # docker compose rather than a `services:` block, so CI and a laptop
+      # bring up the same custom image. A service block would need the image
+      # defined twice, and the second definition is the one that drifts.
+      - name: Start the stack
+        run: make up
+
+      # These fail rather than skip here. A skipped integration suite in CI is
+      # indistinguishable from a passing one, which is how the fold parity check
+      # stayed unrun for four slices.
+      - name: Integration tests
+        run: make test-integration
+
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200

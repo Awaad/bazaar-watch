@@ -91,3 +91,89 @@ def test_every_gate_script_is_registered() -> None:
     on_disk = {p.name for p in GATES.iterdir() if p.suffix in {".sh", ".py"}}
     makefile = Path("Makefile").read_text(encoding="utf-8")
     assert on_disk <= _gate_scripts(makefile)
+
+
+BRANCH_SCOPE = FIXTURES / "branch-scope" / "modules"
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        "indexing/violation_orm.py",
+        "search/violation_sql.py",
+        "economy/violation_sql.py",
+    ],
+)
+def test_branch_scope_gate_fires(fixture: str) -> None:
+    result = _run("branch-scope.py", str(BRANCH_SCOPE / fixture))
+    assert result.returncode == 1, result.stdout
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        "indexing/clean.py",
+        # Prose and a local variable are not access. The first version of this
+        # gate matched a regex over raw lines and rejected both, which is the
+        # false-positive failure ADR-0088 argues against.
+        "indexing/clean_local_name.py",
+        "geo/clean_sql.py",
+    ],
+)
+def test_branch_scope_gate_allows_correct_code(fixture: str) -> None:
+    result = _run("branch-scope.py", str(BRANCH_SCOPE / fixture))
+    assert result.returncode == 0, result.stdout
+
+
+def test_branch_scope_gate_points_at_the_selectables() -> None:
+    """A gate that says no without saying what to do instead gets suppressed."""
+    result = _run("branch-scope.py", str(BRANCH_SCOPE / "indexing/violation_orm.py"))
+    assert "index_eligible_branches()" in result.stdout
+    assert "ADR-0088" in result.stdout
+
+
+def test_branch_scope_gate_passes_against_the_real_tree() -> None:
+    result = _run("branch-scope.py")
+    assert result.returncode == 0, result.stdout
+
+
+UPDATED_AT = FIXTURES / "updated-at-triggers"
+
+
+def test_updated_at_gate_fires_on_a_table_with_no_trigger() -> None:
+    result = _run("updated-at-triggers.py", str(UPDATED_AT / "missing-trigger.py"))
+    assert result.returncode == 1, result.stdout
+    assert "widgets" in result.stdout
+
+
+def test_updated_at_gate_resolves_a_loop_over_a_module_constant() -> None:
+    """The f-string in the loop never spells the trigger name out. Requiring it
+    to would mean shaping migrations to suit a regex."""
+    result = _run("updated-at-triggers.py", str(UPDATED_AT / "loop-over-constant.py"))
+    assert result.returncode == 0, result.stdout
+
+
+def test_updated_at_gate_passes_against_the_real_migrations() -> None:
+    result = _run("updated-at-triggers.py")
+    assert result.returncode == 0, result.stdout
+
+
+def test_updated_at_gate_resolves_each_revisions_own_constant() -> None:
+    """Two revisions can both call their tuple `_UPDATED_AT_TABLES`. Resolving
+    it against the concatenated source finds the first assignment and reports
+    the later revision's tables as uncovered, which is what happened when
+    migration 0004 arrived."""
+    result = _run(
+        "updated-at-triggers.py",
+        str(UPDATED_AT / "loop-over-constant.py"),
+        str(UPDATED_AT / "second-revision-same-constant.py"),
+    )
+    assert result.returncode == 0, result.stdout
+
+
+def test_updated_at_gate_does_not_care_about_formatting() -> None:
+    """Three earlier versions matched text and misfired three times, the last on
+    where `op.create_table(...)` puts its closing paren. Both tables here are
+    covered, in a file ruff would accept and the old regex could not read."""
+    result = _run("updated-at-triggers.py", str(UPDATED_AT / "awkward-formatting.py"))
+    assert result.returncode == 0, result.stdout

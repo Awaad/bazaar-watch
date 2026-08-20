@@ -21,6 +21,7 @@ from bazaarwatch.core.settings import get_settings
 
 # Importing the models registers them on Base.metadata. Without this, an
 # autogenerate run would cheerfully propose dropping every table.
+from bazaarwatch.modules.geo import models as geo_models  # noqa: F401
 from bazaarwatch.modules.identity import models as identity_models  # noqa: F401
 
 config = context.config

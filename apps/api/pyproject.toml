@@ -13,6 +13,7 @@ dependencies = [
     "redis>=5.2",
     "structlog>=24.4",
     "alembic>=1.19.1",
+    "geoalchemy2>=0.20",
 ]
 
 

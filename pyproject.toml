@@ -71,6 +71,8 @@ ignore = [
 "**/tests/test_text.py" = ["PLR2004", "RUF001", "RUF002"]
 "**/tests/test_fold_parity.py" = ["PLR2004", "RUF001", "RUF002"]
 "**/tests/test_slugify.py" = ["PLR2004", "RUF001", "RUF002"]
+# Turkish text is the subject, not an accident.
+"**/tests/test_geo_constraints.py" = ["PLR2004", "RUF001", "RUF002"]
 # Gates are command-line tools. Printing is their output.
 "tools/gates/*.py" = ["T201"]
 

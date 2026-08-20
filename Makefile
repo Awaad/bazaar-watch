@@ -140,6 +140,14 @@ boundaries: ## Enforce module boundaries (docs/01-architecture.md)
 test: ## Run the test suite
 	uv run pytest
 
+.PHONY: test-integration
+test-integration: ## Run the tests that need Postgres. Requires `make up`.
+	uv run pytest -m integration
+
+.PHONY: test-all
+test-all: ## Everything, integration included. Requires `make up`.
+	uv run pytest -m ""
+
 .PHONY: api
 api: ## Run the API against the local stack
 	uv run python -m bazaarwatch

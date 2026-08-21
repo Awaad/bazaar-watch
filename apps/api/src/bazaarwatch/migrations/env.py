@@ -24,6 +24,7 @@ from bazaarwatch.core.settings import get_settings
 from bazaarwatch.modules.catalog import models as catalog_models  # noqa: F401
 from bazaarwatch.modules.geo import models as geo_models  # noqa: F401
 from bazaarwatch.modules.identity import models as identity_models  # noqa: F401
+from bazaarwatch.modules.lexicon import models as lexicon_models  # noqa: F401
 
 config = context.config
 

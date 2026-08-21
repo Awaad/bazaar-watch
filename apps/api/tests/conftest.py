@@ -35,6 +35,10 @@ from sqlalchemy import Connection, Engine, create_engine, text
 from bazaarwatch.core.settings import Environment, Settings
 
 TEST_DATABASE = "bazaarwatch_test"
+# The seed commits. Giving it its own database is what keeps the rollback
+# isolation of `db` honest: a committed row in the shared database is visible to
+# every later test, and the failure shows up somewhere unrelated.
+SEED_DATABASE = "bazaarwatch_seed_test"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ALEMBIC_INI = REPO_ROOT / "apps" / "api" / "alembic.ini"
 
@@ -124,25 +128,24 @@ def _migration_env(url: str) -> dict[str, str]:
     }
 
 
-@pytest.fixture(scope="session")
-def migrated_engine() -> Iterator[Engine]:
-    url = _base_url()
+def _provision(database: str) -> Engine:
+    """Drop, create, install extensions, migrate. Returns a connected engine."""
+    url = _with_database(_base_url(), database)
     admin = create_engine(_with_database(url, "postgres"), isolation_level="AUTOCOMMIT")
 
     try:
         with admin.connect() as connection:
-            connection.execute(text(f'DROP DATABASE IF EXISTS "{TEST_DATABASE}" WITH (FORCE)'))
-            connection.execute(text(f'CREATE DATABASE "{TEST_DATABASE}"'))
+            connection.execute(text(f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)'))
+            connection.execute(text(f'CREATE DATABASE "{database}"'))
     except Exception as exc:
-        pytest.skip(f"no reachable Postgres at {urlsplit(url).netloc}: {exc}")
+        _unavailable(f"no reachable Postgres at {urlsplit(url).netloc}: {exc}")
     finally:
         admin.dispose()
 
     # Migration 0001 asserts the extensions exist and deliberately does not
     # create them: provisioning is the image's job, not a migration's. A
     # database created a moment ago has none of them, so the harness stands in
-    # for the image's init here. Anything that cannot be installed is a real gap
-    # in the environment, and the migration's assertion will say which.
+    # for the image's init here.
     provisioning = create_engine(url, isolation_level="AUTOCOMMIT")
     with provisioning.connect() as connection:
         for extension in REQUIRED_EXTENSIONS:
@@ -162,8 +165,20 @@ def migrated_engine() -> Iterator[Engine]:
             f"migrations failed against {urlsplit(url).netloc}\n"
             f"{_server_description(url)}\n{result.stdout}\n{result.stderr}"
         )
+    return create_engine(url)
 
-    engine = create_engine(url)
+
+@pytest.fixture(scope="session")
+def migrated_engine() -> Iterator[Engine]:
+    engine = _provision(TEST_DATABASE)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def seed_engine() -> Iterator[Engine]:
+    """A second database, for the one test that commits."""
+    engine = _provision(SEED_DATABASE)
     yield engine
     engine.dispose()
 

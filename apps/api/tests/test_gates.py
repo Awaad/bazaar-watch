@@ -50,7 +50,7 @@ def test_workflow_gate_names_the_dedented_job() -> None:
 
 
 def test_the_real_workflow_declares_its_jobs_under_jobs() -> None:
-    """This failed before: `api` sat at the top level, so mypy,
+    """This failed for ten slices: `api` sat at the top level, so mypy,
     import-linter and pytest ran nowhere but a laptop."""
     result = _run("workflow-jobs.py")
     assert result.returncode == 0, result.stdout
@@ -207,3 +207,31 @@ def test_gates_that_import_the_application_run_through_uv() -> None:
                 if "bazaarwatch" in source and not entry.startswith("uv run"):
                     wrong.append(f"{hook['id']}: imports the application, entry is {entry!r}")
     assert not wrong, wrong
+
+
+def test_a_gate_handed_a_missing_file_fails_rather_than_passing() -> None:
+    """Zero files checked is a clean run, and reporting it as one turned a
+    missing fixture into an assertion failure about the gate's output rather
+    than a message about the file."""
+    result = _run("branch-scope.py", str(BRANCH_SCOPE / "indexing/does-not-exist.py"))
+    assert result.returncode != 0
+    assert "no such file" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        "branch-scope/modules/indexing/violation_observations.py",
+        "branch-scope/modules/indexing/clean_observations.py",
+        "branch-scope/modules/economy/violation_observations_sql.py",
+        "branch-scope/modules/observations/clean_sql.py",
+        "updated-at-triggers/awkward-formatting.py",
+        "enum-parity/stale.py",
+        "workflow-jobs/dedented-job.yml",
+    ],
+)
+def test_every_fixture_a_test_relies_on_is_present(fixture: str) -> None:
+    """Fixtures are the evidence that a gate fires. One missing from a checkout
+    makes its gate silently untested, which is how three of these arrived
+    without their files."""
+    assert (FIXTURES / fixture).is_file(), f"missing fixture: {fixture}"

@@ -21,6 +21,7 @@ first service function that needs testing, not here.
 
 from __future__ import annotations
 
+import importlib
 import os
 import subprocess
 import sys
@@ -33,6 +34,26 @@ import pytest
 from sqlalchemy import Connection, Engine, create_engine, text
 
 from bazaarwatch.core.settings import Environment, Settings
+
+
+def _register_every_model() -> None:
+    """Import every module's models so `Base.metadata` is complete.
+
+    Tests that iterate the metadata otherwise see whatever the collection order
+    happened to import. `price_observations` has a foreign key into
+    `extraction_runs`, and compiling its DDL without `ingest` imported fails
+    with an error about a missing table rather than about a missing import.
+
+    Discovered rather than listed, for the reason the gates discover: a module
+    missing from a hand-maintained list is invisible, and the suite then passes
+    while blind.
+    """
+    modules = Path(__file__).resolve().parents[1] / "src" / "bazaarwatch" / "modules"
+    for models_file in sorted(modules.glob("*/models.py")):
+        importlib.import_module(f"bazaarwatch.modules.{models_file.parent.name}.models")
+
+
+_register_every_model()
 
 TEST_DATABASE = "bazaarwatch_test"
 # The seed commits. Giving it its own database is what keeps the rollback

@@ -73,7 +73,9 @@ ignore = [
 "**/tests/test_slugify.py" = ["PLR2004", "RUF001", "RUF002"]
 # Turkish text is the subject, not an accident.
 "**/tests/test_geo_constraints.py" = ["PLR2004", "RUF001", "RUF002"]
-# Gates are command-line tools. Printing is their output.
+# Real receipt text from a Girne chain, quoted verbatim.
+"**/tests/test_observations.py" = ["PLR2004", "RUF001", "RUF002"]
+# Gates and the seed are command-line tools. Printing is their output, and
 # the seed is full of Turkish product and place names on purpose.
 "tools/gates/*.py" = ["T201"]
 "tools/seed/*.py" = ["T201", "RUF001", "RUF002"]

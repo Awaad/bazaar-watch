@@ -112,7 +112,6 @@ hand-maintained specification eventually lies about the implementation, and both
 | `no-literal-strings` | A user-visible literal in UI code |
 | `no-server-formatting` | A response field carrying a pre-formatted number, currency or date |
 | `branch-kind-predicate` | An index or comparison query over `price_observations` joined to `branches` without a `branch_kind` predicate |
-| `observation-status-predicate` | An aggregate over `price_observations` without a status predicate |
 | `i18n-parity` | A locale file missing keys present in another |
 | `updated-at-triggers` | A table with `updated_at` and no trigger |
 | `privacy-invariant-tests` | The three adversarial tests are absent or skipped |

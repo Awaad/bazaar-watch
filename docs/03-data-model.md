@@ -550,20 +550,27 @@ CREATE TABLE submissions (
     id                     UUID PRIMARY KEY DEFAULT uuidv7(),
     contributor_id         UUID NOT NULL REFERENCES users(id),
     client_idempotency_key UUID NOT NULL UNIQUE,
-    channel                TEXT NOT NULL
+    channel                VARCHAR(16) NOT NULL
                            CHECK (channel IN ('app','console','scrape')),
-    kind                   TEXT NOT NULL
+    kind                   VARCHAR(16) NOT NULL
                            CHECK (kind IN ('receipt','shelf_manual','shelf_barcode')),
-    claimed_branch_id      UUID REFERENCES branches(id),
+    claimed_branch_id      UUID REFERENCES branches(id) ON DELETE RESTRICT,
     captured_at            TIMESTAMPTZ NOT NULL,
     received_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     location_matched       BOOLEAN,             -- derived at ingest
     location_confidence    NUMERIC(4,3),        -- coordinate itself is discarded
-    status                 TEXT NOT NULL DEFAULT 'received'
+    status                 VARCHAR(16) NOT NULL DEFAULT 'received'
                            CHECK (status IN ('received','extracting','extracted',
                                              'in_review','accepted','rejected','failed')),
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT confidence_in_range
+        CHECK (location_confidence IS NULL OR location_confidence BETWEEN 0 AND 1),
+    -- A confidence with no verdict, or a verdict with no confidence, is half a
+    -- derivation and neither half is usable.
+    CONSTRAINT location_verdict_is_complete
+        CHECK ((location_matched IS NULL) = (location_confidence IS NULL))
 );
 
 CREATE TABLE media_objects (
@@ -581,7 +588,16 @@ CREATE TABLE media_objects (
     subject_user_id UUID NOT NULL REFERENCES users(id),   -- whose KEK wraps this object
     wrapped_dek   BYTEA NOT NULL,                          -- data key, wrapped by the subject KEK
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (bucket, object_key)
+    UNIQUE (bucket, object_key),
+
+    CONSTRAINT byte_size_is_positive CHECK (byte_size > 0),
+    -- Dimensions come as a pair or not at all.
+    CONSTRAINT dimensions_are_paired CHECK ((width IS NULL) = (height IS NULL)),
+    CONSTRAINT dimensions_are_positive
+        CHECK (width IS NULL OR (width > 0 AND height > 0)),
+    -- Erasure destroys the subject KEK, which makes every object wrapped by it
+    -- unreadable. An object with no wrapped key is not covered by that.
+    CONSTRAINT dek_is_present CHECK (length(wrapped_dek) > 0)
 );
 -- Crops share the subject of their original: shredding an original while its crops
 -- persist would retain fragments of exactly the sensitive content.
@@ -605,7 +621,19 @@ CREATE TABLE extraction_runs (
     completed_at       TIMESTAMPTZ,
     status             TEXT NOT NULL DEFAULT 'running'
                        CHECK (status IN ('running','completed','failed','superseded')),
-    UNIQUE (submission_id, extraction_method, extraction_version)
+    UNIQUE (submission_id, extraction_method, extraction_version),
+
+    -- A superseded run is not the current one. Without this, superseding
+    -- without clearing the flag leaves the partial index below as the only
+    -- thing that notices, at a confusing moment.
+    CONSTRAINT superseded_is_not_current
+        CHECK (NOT is_current OR status <> 'superseded'),
+    CONSTRAINT successor_implies_superseded
+        CHECK (superseded_by IS NULL OR status = 'superseded'),
+    CONSTRAINT not_its_own_successor
+        CHECK (superseded_by IS NULL OR superseded_by <> id),
+    CONSTRAINT completed_after_started
+        CHECK (completed_at IS NULL OR completed_at >= started_at)
 );
 CREATE UNIQUE INDEX extraction_runs_current_uq
     ON extraction_runs (submission_id) WHERE is_current;
@@ -628,7 +656,14 @@ CREATE TABLE receipts (
     status                     TEXT NOT NULL DEFAULT 'pending'
                                CHECK (status IN ('pending','accepted','flagged','duplicate','rejected','superseded')),
     created_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (extraction_run_id)
+    UNIQUE (extraction_run_id),
+
+    -- A residual verdict with no residual is a verdict nobody can check.
+    CONSTRAINT residual_is_quantified
+        CHECK (reconciliation_status <> 'residual'
+               OR reconciliation_residual_minor IS NOT NULL),
+    CONSTRAINT printed_total_is_not_negative
+        CHECK (printed_total_minor IS NULL OR printed_total_minor >= 0)
 );
 CREATE INDEX receipts_fingerprint_ix ON receipts (fingerprint);
 
@@ -646,9 +681,27 @@ CREATE TABLE receipt_lines (
     raw_unit_price_minor BIGINT,
     raw_line_total_minor BIGINT,
     bbox                 JSONB,                 -- [x, y, w, h] normalised, required for T2 crops
+    -- The KDV rate printed beside the line, in basis points: 0, 500, 1000, 1600.
+    -- Integer, because rates print as whole percents. Nullable, because not
+    -- every POS prints one. Stored because it is unrecoverable later: the
+    -- mapped product's category is a proxy that fails across a rate change, and
+    -- the original is on a retention clock (ADR-0016). It also turns
+    -- reconciliation into one equation per rate bucket rather than one overall.
+    tax_rate_bp          SMALLINT,
     modifies_line_id     UUID REFERENCES receipt_lines(id),   -- discount to its item
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (receipt_id, line_index)
+    UNIQUE (receipt_id, line_index),
+
+    CONSTRAINT line_index_is_not_negative CHECK (line_index >= 0),
+    CONSTRAINT raw_text_is_not_empty CHECK (length(raw_text) > 0),
+    CONSTRAINT does_not_modify_itself
+        CHECK (modifies_line_id IS NULL OR modifies_line_id <> id),
+    -- Four normalised numbers. A three-element box crops the wrong region and
+    -- a reviewer sees an arbitrary strip of somebody's receipt.
+    CONSTRAINT bbox_has_four_values
+        CHECK (bbox IS NULL OR jsonb_array_length(bbox) = 4),
+    CONSTRAINT tax_rate_in_range
+        CHECK (tax_rate_bp IS NULL OR tax_rate_bp BETWEEN 0 AND 10000)
 );
 ```
 
@@ -679,7 +732,21 @@ CREATE TABLE price_observations (
     confidence        NUMERIC(4,3),
     extraction_run_id UUID REFERENCES extraction_runs(id),   -- NULL for non-receipt sources
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (source_kind, source_id)
+    UNIQUE (source_kind, source_id),
+
+    CONSTRAINT price_is_not_negative CHECK (price_minor >= 0),
+    CONSTRAINT quantity_is_positive CHECK (quantity > 0),
+    CONSTRAINT confidence_in_range
+        CHECK (confidence IS NULL OR confidence BETWEEN 0 AND 1),
+    -- A unit price without a basis is a number with no meaning, and a basis
+    -- without a price is half a derivation.
+    CONSTRAINT unit_price_has_a_basis
+        CHECK ((unit_price_minor IS NULL) = (unit_basis IS NULL)),
+    -- A receipt-sourced observation names the run that produced it, and only a
+    -- receipt-sourced one has a run to name. This is what lets superseding a
+    -- run find its observations.
+    CONSTRAINT run_iff_receipt_sourced
+        CHECK ((source_kind = 'receipt_line') = (extraction_run_id IS NOT NULL))
 );
 -- When an extraction run is superseded, its observations move to 'superseded' in the
 -- same transaction as the new run's observations are written. Never deleted.
@@ -700,6 +767,11 @@ product. It is derived, never submitted.
 There is no such thing as "the price". Read surfaces expose the most recent observation
 with its age and confidence, or they are lying during exactly the volatile periods that
 matter most.
+
+Aggregates do not query this table. `countable_observations()` is accepted and resolved;
+`unresolved_observations()` is every row with no product, regardless of status, because a
+pending unresolved row is exactly what a review task is for. Enforced by the `branch-scope`
+gate. (ADR-0090)
 
 ## 9. integrity
 

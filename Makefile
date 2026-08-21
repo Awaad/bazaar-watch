@@ -148,6 +148,10 @@ test-integration: ## Run the tests that need Postgres. Requires `make up`.
 test-all: ## Everything, integration included. Requires `make up`.
 	uv run pytest -m ""
 
+.PHONY: seed
+seed: ## Load development fixture data. Local environments only.
+	uv run python tools/seed/seed.py
+
 .PHONY: api
 api: ## Run the API against the local stack
 	uv run python -m bazaarwatch

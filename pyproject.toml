@@ -74,7 +74,9 @@ ignore = [
 # Turkish text is the subject, not an accident.
 "**/tests/test_geo_constraints.py" = ["PLR2004", "RUF001", "RUF002"]
 # Gates are command-line tools. Printing is their output.
+# the seed is full of Turkish product and place names on purpose.
 "tools/gates/*.py" = ["T201"]
+"tools/seed/*.py" = ["T201", "RUF001", "RUF002"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bazaarwatch"]

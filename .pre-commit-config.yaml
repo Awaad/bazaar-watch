@@ -76,8 +76,8 @@ repos:
 
       - id: updated-at-triggers
         name: every updated_at column has a trigger
-        entry: tools/gates/updated-at-triggers.py
-        language: script
+        entry: uv run python tools/gates/updated-at-triggers.py
+        language: system
         pass_filenames: false
         files: ^apps/api/src/bazaarwatch/migrations/
 

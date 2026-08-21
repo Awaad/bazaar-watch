@@ -50,7 +50,7 @@ def test_workflow_gate_names_the_dedented_job() -> None:
 
 
 def test_the_real_workflow_declares_its_jobs_under_jobs() -> None:
-    """This failed for ten slices: `api` sat at the top level, so mypy,
+    """This failed before: `api` sat at the top level, so mypy,
     import-linter and pytest ran nowhere but a laptop."""
     result = _run("workflow-jobs.py")
     assert result.returncode == 0, result.stdout
@@ -99,7 +99,15 @@ UPDATED_AT = FIXTURES / "updated-at-triggers"
 
 @pytest.mark.parametrize(
     "fixture",
-    ["indexing/violation_orm.py", "search/violation_sql.py", "economy/violation_sql.py"],
+    [
+        "indexing/violation_orm.py",
+        "search/violation_sql.py",
+        "economy/violation_sql.py",
+        # ADR-0090. The same shape, on a table that keeps superseded rows by
+        # design, so the count grows every time the model improves.
+        "indexing/violation_observations.py",
+        "economy/violation_observations_sql.py",
+    ],
 )
 def test_branch_scope_gate_fires(fixture: str) -> None:
     result = _run("branch-scope.py", str(BRANCH_SCOPE / fixture))
@@ -115,6 +123,8 @@ def test_branch_scope_gate_fires(fixture: str) -> None:
         # false-positive failure ADR-0088 argues against.
         "indexing/clean_local_name.py",
         "geo/clean_sql.py",
+        "indexing/clean_observations.py",
+        "observations/clean_sql.py",
     ],
 )
 def test_branch_scope_gate_allows_correct_code(fixture: str) -> None:
@@ -127,6 +137,15 @@ def test_branch_scope_gate_points_at_the_selectables() -> None:
     result = _run("branch-scope.py", str(BRANCH_SCOPE / "indexing/violation_orm.py"))
     assert "index_eligible_branches()" in result.stdout
     assert "ADR-0088" in result.stdout
+
+
+def test_the_gate_names_the_right_scope_per_table() -> None:
+    """Two guards, two sets of advice. Pointing an observations violation at
+    the branch selectables would be worse than saying nothing."""
+    result = _run("branch-scope.py", str(BRANCH_SCOPE / "indexing/violation_observations.py"))
+    assert "countable_observations()" in result.stdout
+    assert "ADR-0090" in result.stdout
+    assert "index_eligible_branches" not in result.stdout
 
 
 def test_branch_scope_gate_passes_against_the_real_tree() -> None:
@@ -170,3 +189,21 @@ def test_updated_at_gate_passes_against_the_real_migrations() -> None:
     and it passed while missing two tables in migration 0005."""
     result = _run("updated-at-triggers.py")
     assert result.returncode == 0, result.stdout
+
+
+def test_gates_that_import_the_application_run_through_uv() -> None:
+    """A `language: script` hook runs the shebang, which is whichever python3 is
+    on PATH rather than the environment holding the lockfile. `updated-at-triggers`
+    was fine that way until it started reading the ORM metadata, and then it died
+    on a missing SQLAlchemy in a hook nobody had touched.
+    """
+    config = yaml.safe_load(Path(".pre-commit-config.yaml").read_text(encoding="utf-8"))
+    wrong = []
+    for repo in config["repos"]:
+        for hook in repo.get("hooks", []):
+            entry = str(hook.get("entry", ""))
+            for script in _gate_scripts(entry):
+                source = (GATES / script).read_text(encoding="utf-8")
+                if "bazaarwatch" in source and not entry.startswith("uv run"):
+                    wrong.append(f"{hook['id']}: imports the application, entry is {entry!r}")
+    assert not wrong, wrong

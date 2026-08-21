@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate: index and comparison code reaches branches only through the selectables.
+"""Gate: aggregates reach branches and observations only through selectables.
 
 ADR-0045 keeps online branches out of indices and access-scoped comparison.
 ADR-0023 keeps unverified branches out of the same. Two predicates, from two
@@ -8,18 +8,20 @@ number rather than an error. The number then gets published, and ADR-0079
 forbids restating a published figure: the remedy is an erratum.
 
 ADR-0088 moves the exclusions into `geo.service.index_eligible_branches()` and
-`geo.service.public_branches()`. This gate is the enforcement.
+`geo.service.public_branches()`. ADR-0090 does the same for observations, where
+the trap is worse: `price_observations` keeps superseded rows by design, so the
+count grows every time the extraction model improves. This gate enforces both.
 
 Two rules:
 
-  1. `modules/indexing` and `modules/search` do not import `geo.models` and do
-     not use the name `Branch`. They ask `geo.service` for a scope. `search`
-     may not import `geo` at all under the module map, so for it this is mostly
-     about rule 2, which is the right answer: search reaches branches through
-     `catalog`.
+  1. The restricted modules do not import the owning module's `models` and do
+     not use the guarded class names. They ask the service for a scope.
+     `modules/economy` is restricted for observations and not for branches,
+     because bounty payout aggregates over observations and paying twice for a
+     reprocessed receipt is the same defect wearing different clothes.
 
-  2. No string anywhere outside `modules/geo` and the migrations contains SQL
-     naming the `branches` table. Rule 1 cannot see inside a string.
+  2. No string anywhere outside the owning module and the migrations contains
+     SQL naming a guarded table. Rule 1 cannot see inside a string.
 
 This reads the AST, not the lines. A first version matched a regex over raw
 text and immediately fired on the word `branches` in a docstring and on a local
@@ -45,24 +47,30 @@ from pathlib import Path
 
 SRC = Path("apps/api/src/bazaarwatch")
 
-# Modules that compute or serve figures and must go through a scope.
-RESTRICTED = ("modules/indexing", "modules/search")
+# (guarded class, owning module, table, modules that must go through a scope,
+#  the advice to print). One entry per protected table.
+GUARDS = (
+    (
+        "Branch",
+        "geo",
+        "branches",
+        ("modules/indexing", "modules/search"),
+        "geo.service.index_eligible_branches() or public_branches(), which carry "
+        "the ADR-0045 and ADR-0023 exclusions (ADR-0088)",
+    ),
+    (
+        "PriceObservation",
+        "observations",
+        "price_observations",
+        ("modules/indexing", "modules/search", "modules/economy"),
+        "observations.service.countable_observations() or unresolved_observations(), "
+        "which carry the status and resolution exclusions (ADR-0090)",
+    ),
+)
 
-# Where naming the table is the job.
-SQL_ALLOWED = ("modules/geo", "migrations")
-
-FORBIDDEN_NAME = "Branch"
-FORBIDDEN_IMPORT = "bazaarwatch.modules.geo.models"
-
-# `FROM branches`, `JOIN branches b`, `UPDATE branches SET`, `INTO branches`.
-RAW_SQL = re.compile(r"\b(?:FROM|JOIN|UPDATE|INTO)\s+branches\b", re.IGNORECASE)
+RAW_SQL_TEMPLATE = r"\b(?:FROM|JOIN|UPDATE|INTO)\s+{table}\b"
 
 IGNORE = re.compile(r"#\s*gate-ignore:\s*branch-scope")
-
-SCOPE_ADVICE = (
-    "Use geo.service.index_eligible_branches() or public_branches(), which carry "
-    "the ADR-0045 and ADR-0023 exclusions (ADR-0088)."
-)
 
 
 def _under(path: Path, prefixes: tuple[str, ...]) -> bool:
@@ -79,38 +87,60 @@ def _suppressed(source: str) -> set[int]:
     }
 
 
-def _check_restricted(tree: ast.Module) -> list[tuple[int, str]]:
-    problems = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(FORBIDDEN_IMPORT):
-            problems.append((node.lineno, f"imports {FORBIDDEN_IMPORT}. {SCOPE_ADVICE}"))
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name.startswith(FORBIDDEN_IMPORT):
-                    problems.append((node.lineno, f"imports {alias.name}. {SCOPE_ADVICE}"))
-        elif (isinstance(node, ast.Name) and node.id == FORBIDDEN_NAME) or (
-            isinstance(node, ast.Attribute) and node.attr == FORBIDDEN_NAME
-        ):
-            problems.append((node.lineno, f"uses the name `{FORBIDDEN_NAME}`. {SCOPE_ADVICE}"))
-    return problems
+def _check_guard(
+    tree: ast.Module, guard: tuple[str, str, str, tuple[str, ...], str], path: Path
+) -> list[tuple[int, str]]:
+    name, module, table, restricted, advice = guard
+    owning_import = f"bazaarwatch.modules.{module}.models"
+    problems: list[tuple[int, str]] = []
 
+    if _under(path, restricted):
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(owning_import):
+                problems.append((node.lineno, f"imports {owning_import}. Use {advice}."))
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.startswith(owning_import):
+                        problems.append((node.lineno, f"imports {alias.name}. Use {advice}."))
+            elif (isinstance(node, ast.Name) and node.id == name) or (
+                isinstance(node, ast.Attribute) and node.attr == name
+            ):
+                problems.append((node.lineno, f"uses the name `{name}`. Use {advice}."))
 
-def _check_raw_sql(tree: ast.Module) -> list[tuple[int, str]]:
-    problems = []
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Constant)
-            and isinstance(node.value, str)
-            and RAW_SQL.search(node.value)
-        ):
-            problems.append(
-                (
-                    node.lineno,
-                    "raw SQL against the branches table outside geo. The ADR-0045 "
-                    "and ADR-0023 exclusions cannot be applied to it (ADR-0088).",
+    if not _under(path, (f"modules/{module}", "migrations")):
+        pattern = re.compile(RAW_SQL_TEMPLATE.format(table=table), re.IGNORECASE)
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and pattern.search(node.value)
+            ):
+                problems.append(
+                    (
+                        node.lineno,
+                        f"raw SQL against the {table} table outside {module}. "
+                        f"The exclusions cannot be applied to it. Use {advice}.",
+                    )
                 )
-            )
+
     return problems
+
+
+def _resolve(argv: list[str], default: list[Path]) -> list[Path]:
+    """Explicit paths must exist.
+
+    A gate handed a path that is not there used to filter it away and report
+    that everything it checked was clean, which is true and useless: zero files
+    checked is a clean run. The message then blamed the caller's assertion
+    instead of the missing file.
+    """
+    if not argv:
+        return default
+    paths = [Path(arg) for arg in argv]
+    missing = [str(p) for p in paths if not p.is_file()]
+    if missing:
+        raise SystemExit(f"no such file: {', '.join(missing)}")
+    return paths
 
 
 def check(paths: list[Path]) -> list[str]:
@@ -124,10 +154,8 @@ def check(paths: list[Path]) -> list[str]:
             continue
 
         found: list[tuple[int, str]] = []
-        if _under(path, RESTRICTED):
-            found += _check_restricted(tree)
-        if not _under(path, SQL_ALLOWED):
-            found += _check_raw_sql(tree)
+        for guard in GUARDS:
+            found += _check_guard(tree, guard, path)
 
         suppressed = _suppressed(source)
         problems += [
@@ -139,12 +167,11 @@ def check(paths: list[Path]) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    paths = [Path(arg) for arg in argv] if argv else sorted(SRC.rglob("*.py"))
-    paths = [p for p in paths if p.suffix == ".py" and p.is_file()]
+    paths = _resolve(argv, sorted(SRC.rglob("*.py")))
 
     problems = check(paths)
     if problems:
-        print("Branch scope (ADR-0088):")
+        print("Scope (ADR-0088, ADR-0090):")
         for problem in problems:
             print(f"  {problem}")
         return 1

@@ -20,13 +20,16 @@ today's class would emit tomorrow's schema for yesterday's history, which is the
 opposite of what a migration is for. The literal is written by hand and this
 gate is what keeps the hand honest.
 
-Keep a rendered constraint on one source line. This reads the migration text, so
-a constraint split across implicitly concatenated string fragments will not be
-found even though it is correct.
+Constraint text is read as string literals via the AST, not as raw source. An
+earlier version searched the text and could not find a constraint that ruff had
+wrapped across implicitly concatenated fragments, because the quotes and the
+join sat in the middle of the needle. Python already concatenates those into one
+constant; asking the parser is simpler than telling authors how to format.
 """
 
 from __future__ import annotations
 
+import ast
 import importlib
 import re
 import sys
@@ -80,6 +83,23 @@ def enum_checks() -> list[tuple[str, str, str]]:
     return sorted(found)
 
 
+def _resolve(argv: list[str], default: list[Path]) -> list[Path]:
+    """Explicit paths must exist.
+
+    A gate handed a path that is not there used to filter it away and report
+    that everything it checked was clean, which is true and useless: zero files
+    checked is a clean run. The message then blamed the caller's assertion
+    instead of the missing file.
+    """
+    if not argv:
+        return default
+    paths = [Path(arg) for arg in argv]
+    missing = [str(p) for p in paths if not p.is_file()]
+    if missing:
+        raise SystemExit(f"no such file: {', '.join(missing)}")
+    return paths
+
+
 def main(argv: list[str]) -> int:
     if argv:
         paths = [Path(arg) for arg in argv]
@@ -89,7 +109,19 @@ def main(argv: list[str]) -> int:
         print(f"No migrations at {VERSIONS}", file=sys.stderr)
         return 1
 
-    migrations = _normalise("\n".join(p.read_text(encoding="utf-8") for p in paths))
+    literals = []
+    for path in paths:
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError as exc:
+            print(f"{path}: could not be parsed: {exc}", file=sys.stderr)
+            return 1
+        literals += [
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        ]
+    migrations = {_normalise(literal) for literal in literals}
 
     checks = enum_checks()
     if not checks:

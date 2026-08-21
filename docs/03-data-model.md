@@ -498,23 +498,45 @@ correct for trigram; it degrades a model trained on natural diacritics. (ADR-002
 
 ```sql
 CREATE TABLE chain_lexicon (
-    id           UUID PRIMARY KEY DEFAULT uuidv7(),
-    chain_id     UUID NOT NULL REFERENCES chains(id),
-    key_kind     TEXT NOT NULL CHECK (key_kind IN ('sku','raw_text')),
-    key_value    TEXT NOT NULL,        -- sku verbatim, or Turkish-folded raw text
-    product_id   UUID NOT NULL REFERENCES products(id),
-    confidence   NUMERIC(4,3) NOT NULL DEFAULT 1.000,
-    decided_by   UUID NOT NULL REFERENCES users(id),
-    decided_via  TEXT NOT NULL
-                 CHECK (decided_via IN ('operator','review_t1')),
-    status       TEXT NOT NULL DEFAULT 'active'
-                 CHECK (status IN ('active','superseded')),
-    superseded_by UUID REFERENCES chain_lexicon(id),
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    id            UUID PRIMARY KEY DEFAULT uuidv7(),
+    chain_id      UUID NOT NULL REFERENCES chains(id) ON DELETE RESTRICT,
+    key_kind      VARCHAR(16) NOT NULL CHECK (key_kind IN ('sku','raw_text')),
+    -- sku verbatim, or Turkish-folded raw text. Bounded because it sits inside
+    -- a unique index.
+    key_value     VARCHAR(200) NOT NULL,
+    product_id    UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    confidence    NUMERIC(4,3) NOT NULL DEFAULT 1.000
+                  CHECK (confidence BETWEEN 0 AND 1),
+    -- Never null. ADR-0011 made structural: a column that cannot be null
+    -- cannot be filled by a suggestion with nobody to attribute.
+    decided_by    UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    decided_via   VARCHAR(16) NOT NULL
+                  CHECK (decided_via IN ('operator','review_t1')),
+    status        VARCHAR(16) NOT NULL DEFAULT 'active'
+                  CHECK (status IN ('active','superseded')),
+    superseded_by UUID REFERENCES chain_lexicon(id) ON DELETE RESTRICT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- An empty key matches every line that printed nothing.
+    CONSTRAINT key_value_is_not_empty CHECK (length(key_value) > 0),
+    -- The column holds folded text for this kind, and an unfolded entry is not
+    -- wrong in any visible way: it simply never matches, so the operator who
+    -- wrote it sees the mapping silently ignored. turkish_fold is IMMUTABLE,
+    -- which is what lets a CHECK say it.
+    CONSTRAINT raw_text_key_is_folded
+        CHECK (key_kind <> 'raw_text' OR key_value = turkish_fold(key_value)),
+    -- One direction only. An active entry must not name a successor; a
+    -- superseded one with no successor is an operator withdrawing a wrong
+    -- mapping with nothing to put in its place, which is a real thing to want.
+    CONSTRAINT successor_implies_superseded
+        CHECK (superseded_by IS NULL OR status = 'superseded'),
+    CONSTRAINT not_its_own_successor
+        CHECK (superseded_by IS NULL OR superseded_by <> id)
 );
 -- One ACTIVE entry per key. Superseded history accumulates without limit.
-CREATE UNIQUE INDEX chain_lexicon_active_uq
+CREATE UNIQUE INDEX uq_chain_lexicon_active
     ON chain_lexicon (chain_id, key_kind, key_value) WHERE status = 'active';
+CREATE INDEX ix_chain_lexicon_product_id ON chain_lexicon (product_id);
 ```
 
 Exact match, not fuzzy match. Resolving a key applies retroactively to every observation
